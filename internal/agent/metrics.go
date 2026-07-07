@@ -6,8 +6,13 @@ import (
 )
 
 type Metrics struct {
-	Gauges   map[string]float64
-	Counters map[string]int64
+	gauges   map[string]float64
+	counters map[string]int64
+}
+
+type MetricsSender interface {
+	SendGauge(name string, value float64) error
+	SendCounter(name string, value int64) error
 }
 
 var runtimeGaugeNames = []string{
@@ -42,8 +47,8 @@ var runtimeGaugeNames = []string{
 
 func NewMetrics() *Metrics {
 	return &Metrics{
-		Gauges:   make(map[string]float64),
-		Counters: make(map[string]int64),
+		gauges:   make(map[string]float64),
+		counters: make(map[string]int64),
 	}
 }
 
@@ -82,10 +87,26 @@ func PollRuntimeMetrics(metrics *Metrics) {
 	}
 
 	for _, name := range runtimeGaugeNames {
-		metrics.Gauges[name] = runtimeGauges[name]
+		metrics.gauges[name] = runtimeGauges[name]
 	}
 
-	metrics.Gauges["RandomValue"] = rand.Float64()
+	metrics.gauges["RandomValue"] = rand.Float64()
 
-	metrics.Counters["PollCount"]++
+	metrics.counters["PollCount"]++
+}
+
+func ReportMetrics(metrics *Metrics, sender MetricsSender) error {
+	for name, value := range metrics.gauges {
+		if err := sender.SendGauge(name, value); err != nil {
+			return err
+		}
+	}
+
+	for name, value := range metrics.counters {
+		if err := sender.SendCounter(name, value); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
