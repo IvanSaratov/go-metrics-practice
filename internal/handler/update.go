@@ -30,6 +30,11 @@ func (h *UpdateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if parts[1] != "update" {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
 	metricType := parts[2]
 	metricName := parts[3]
 	metricValue := parts[4]

@@ -112,3 +112,15 @@ func TestUpdateHandlerUnsupportedMethod(t *testing.T) {
 
 	require.Equal(t, http.StatusMethodNotAllowed, response.Code)
 }
+
+func TestUpdateHandlerUnknownPath(t *testing.T) {
+	storage := repository.NewMemStorage()
+	handler := NewUpdateHandler(storage)
+
+	request := httptest.NewRequest(http.MethodPost, "/updater/counter/TestCounter/10", nil)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	require.Equal(t, http.StatusNotFound, response.Code)
+}
