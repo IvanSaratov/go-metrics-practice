@@ -3,9 +3,16 @@ package agent
 import (
 	"math/rand"
 	"runtime"
+	"sync"
 )
 
 type Metrics struct {
+	mu       sync.RWMutex
+	gauges   map[string]float64
+	counters map[string]int64
+}
+
+type metricsSnapshot struct {
 	gauges   map[string]float64
 	counters map[string]int64
 }
@@ -53,6 +60,9 @@ func NewMetrics() *Metrics {
 }
 
 func PollRuntimeMetrics(metrics *Metrics) {
+	metrics.mu.Lock()
+	defer metrics.mu.Unlock()
+
 	var memStats runtime.MemStats
 	runtime.ReadMemStats(&memStats)
 
@@ -95,14 +105,34 @@ func PollRuntimeMetrics(metrics *Metrics) {
 	metrics.counters["PollCount"]++
 }
 
-func ReportMetrics(metrics *Metrics, sender MetricsSender) error {
-	for name, value := range metrics.gauges {
+func (m *Metrics) snapshot() metricsSnapshot {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	snapshot := metricsSnapshot{
+		gauges:   make(map[string]float64, len(m.gauges)),
+		counters: make(map[string]int64, len(m.counters)),
+	}
+
+	for name, value := range m.gauges {
+		snapshot.gauges[name] = value
+	}
+
+	for name, value := range m.counters {
+		snapshot.counters[name] = value
+	}
+
+	return snapshot
+}
+
+func ReportMetrics(snapshot metricsSnapshot, sender MetricsSender) error {
+	for name, value := range snapshot.gauges {
 		if err := sender.SendGauge(name, value); err != nil {
 			return err
 		}
 	}
 
-	for name, value := range metrics.counters {
+	for name, value := range snapshot.counters {
 		if err := sender.SendCounter(name, value); err != nil {
 			return err
 		}

@@ -38,11 +38,24 @@ func TestReportMetricsSendsAllMetrics(t *testing.T) {
 		counters: make(map[string]int64),
 	}
 
-	err := ReportMetrics(metrics, sender)
+	err := ReportMetrics(metrics.snapshot(), sender)
 
 	require.NoError(t, err)
 	require.Equal(t, 67.1, sender.gauges["TestGauge"])
 	require.Equal(t, int64(10), sender.counters["TestCounter"])
+}
+
+func TestMetricsSnapshotCopiesMetrics(t *testing.T) {
+	metrics := NewMetrics()
+	metrics.gauges["TestGauge"] = 67.1
+	metrics.counters["TestCounter"] = 10
+
+	snapshot := metrics.snapshot()
+	snapshot.gauges["TestGauge"] = 100.1
+	snapshot.counters["TestCounter"] = 20
+
+	require.Equal(t, 67.1, metrics.gauges["TestGauge"])
+	require.Equal(t, int64(10), metrics.counters["TestCounter"])
 }
 
 type fakeSender struct {
