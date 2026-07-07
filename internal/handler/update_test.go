@@ -52,3 +52,63 @@ func TestUpdateHandlerUnknownMetricType(t *testing.T) {
 
 	require.Equal(t, http.StatusBadRequest, response.Code)
 }
+
+func TestUpdateHandlerInvalidGaugeValue(t *testing.T) {
+	storage := repository.NewMemStorage()
+	handler := NewUpdateHandler(storage)
+
+	request := httptest.NewRequest(http.MethodPost, "/update/gauge/TestGauge/not-a-number", nil)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	require.Equal(t, http.StatusBadRequest, response.Code)
+}
+
+func TestUpdateHandlerInvalidCounterValue(t *testing.T) {
+	storage := repository.NewMemStorage()
+	handler := NewUpdateHandler(storage)
+
+	request := httptest.NewRequest(http.MethodPost, "/update/counter/TestCounter/1.5", nil)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	require.Equal(t, http.StatusBadRequest, response.Code)
+}
+
+func TestUpdateHandlerEmptyMetricName(t *testing.T) {
+	storage := repository.NewMemStorage()
+	handler := NewUpdateHandler(storage)
+
+	request := httptest.NewRequest(http.MethodPost, "/update/gauge//67.1", nil)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	require.Equal(t, http.StatusNotFound, response.Code)
+}
+
+func TestUpdateHandlerMissingMetricValue(t *testing.T) {
+	storage := repository.NewMemStorage()
+	handler := NewUpdateHandler(storage)
+
+	request := httptest.NewRequest(http.MethodPost, "/update/gauge/TestGauge", nil)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	require.Equal(t, http.StatusNotFound, response.Code)
+}
+
+func TestUpdateHandlerUnsupportedMethod(t *testing.T) {
+	storage := repository.NewMemStorage()
+	handler := NewUpdateHandler(storage)
+
+	request := httptest.NewRequest(http.MethodGet, "/update/gauge/TestGauge/67.1", nil)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	require.Equal(t, http.StatusMethodNotAllowed, response.Code)
+}

@@ -34,6 +34,11 @@ func (h *UpdateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	metricName := parts[3]
 	metricValue := parts[4]
 
+	if metricName == "" {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
 	if metricType == "gauge" {
 		value, err := strconv.ParseFloat(metricValue, 64)
 		if err != nil {
