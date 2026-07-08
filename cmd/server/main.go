@@ -12,19 +12,50 @@ import (
 	"github.com/IvanSaratov/go-metrics-practice/internal/handler"
 	"github.com/IvanSaratov/go-metrics-practice/internal/repository"
 	log "github.com/sirupsen/logrus"
+	"github.com/urfave/cli/v2"
 )
 
+type serverConfig struct {
+	address string
+}
+
 func main() {
+	app := newServerApp(runServer)
+	if err := app.Run(os.Args); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func newServerApp(run func(config serverConfig) error) *cli.App {
+	app := cli.NewApp()
+	app.Name = "server"
+	app.Flags = []cli.Flag{
+		&cli.StringFlag{
+			Name:  "a",
+			Value: "localhost:8080",
+			Usage: "HTTP server address",
+		},
+	}
+	app.Action = func(ctx *cli.Context) error {
+		return run(serverConfig{
+			address: ctx.String("a"),
+		})
+	}
+
+	return app
+}
+
+func runServer(config serverConfig) error {
 	storage := repository.NewMemStorage()
 	router := handler.NewRouter(storage)
 
 	server := &http.Server{
-		Addr:    ":8080",
+		Addr:    config.address,
 		Handler: router,
 	}
 
 	go func() {
-		log.Info("starting server on :8080")
+		log.Infof("starting server on %s", config.address)
 
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.WithError(err).Fatal("server failed")
@@ -43,4 +74,5 @@ func main() {
 	}
 
 	log.Info("server stopped")
+	return nil
 }
