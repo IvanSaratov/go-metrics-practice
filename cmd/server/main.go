@@ -16,11 +16,11 @@ import (
 
 func main() {
 	storage := repository.NewMemStorage()
-	updateHandler := handler.NewUpdateHandler(storage)
+	router := handler.NewRouter(storage)
 
 	server := &http.Server{
 		Addr:    ":8080",
-		Handler: updateHandler,
+		Handler: router,
 	}
 
 	go func() {

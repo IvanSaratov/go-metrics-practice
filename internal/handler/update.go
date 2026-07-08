@@ -3,9 +3,9 @@ package handler
 import (
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/IvanSaratov/go-metrics-practice/internal/repository"
+	"github.com/go-chi/chi/v5"
 )
 
 type UpdateHandler struct {
@@ -24,20 +24,9 @@ func (h *UpdateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	parts := strings.Split(r.URL.Path, "/")
-	if len(parts) != 5 {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-
-	if parts[1] != "update" {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-
-	metricType := parts[2]
-	metricName := parts[3]
-	metricValue := parts[4]
+	metricType := chi.URLParam(r, "type")
+	metricName := chi.URLParam(r, "name")
+	metricValue := chi.URLParam(r, "value")
 
 	if metricName == "" {
 		w.WriteHeader(http.StatusNotFound)
