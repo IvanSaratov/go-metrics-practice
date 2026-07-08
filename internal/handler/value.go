@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/IvanSaratov/go-metrics-practice/internal/repository"
@@ -35,7 +34,7 @@ func (h *ValueHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		w.WriteHeader(http.StatusOK)
-		_, _ = fmt.Fprintf(w, "%v", value)
+		_, _ = w.Write([]byte(formatGauge(value)))
 		return
 	}
 
@@ -47,7 +46,7 @@ func (h *ValueHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		w.WriteHeader(http.StatusOK)
-		_, _ = fmt.Fprintf(w, "%d", value)
+		_, _ = w.Write([]byte(formatCounter(value)))
 		return
 	}
 
