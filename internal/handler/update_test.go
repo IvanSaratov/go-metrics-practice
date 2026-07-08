@@ -11,7 +11,7 @@ import (
 
 func TestUpdateHandlerUpdateGauge(t *testing.T) {
 	storage := repository.NewMemStorage()
-	handler := NewUpdateHandler(storage)
+	handler := NewRouter(storage)
 
 	request := httptest.NewRequest(http.MethodPost, "/update/gauge/TestGauge/67.1", nil)
 	response := httptest.NewRecorder()
@@ -27,7 +27,7 @@ func TestUpdateHandlerUpdateGauge(t *testing.T) {
 
 func TestUpdateHandlerUpdateCounter(t *testing.T) {
 	storage := repository.NewMemStorage()
-	handler := NewUpdateHandler(storage)
+	handler := NewRouter(storage)
 
 	request := httptest.NewRequest(http.MethodPost, "/update/counter/TestCounter/10", nil)
 	response := httptest.NewRecorder()
@@ -43,7 +43,7 @@ func TestUpdateHandlerUpdateCounter(t *testing.T) {
 
 func TestUpdateHandlerUnknownMetricType(t *testing.T) {
 	storage := repository.NewMemStorage()
-	handler := NewUpdateHandler(storage)
+	handler := NewRouter(storage)
 
 	request := httptest.NewRequest(http.MethodPost, "/update/unknown/TestMetric/10", nil)
 	response := httptest.NewRecorder()
@@ -55,7 +55,7 @@ func TestUpdateHandlerUnknownMetricType(t *testing.T) {
 
 func TestUpdateHandlerInvalidGaugeValue(t *testing.T) {
 	storage := repository.NewMemStorage()
-	handler := NewUpdateHandler(storage)
+	handler := NewRouter(storage)
 
 	request := httptest.NewRequest(http.MethodPost, "/update/gauge/TestGauge/not-a-number", nil)
 	response := httptest.NewRecorder()
@@ -67,7 +67,7 @@ func TestUpdateHandlerInvalidGaugeValue(t *testing.T) {
 
 func TestUpdateHandlerInvalidCounterValue(t *testing.T) {
 	storage := repository.NewMemStorage()
-	handler := NewUpdateHandler(storage)
+	handler := NewRouter(storage)
 
 	request := httptest.NewRequest(http.MethodPost, "/update/counter/TestCounter/1.5", nil)
 	response := httptest.NewRecorder()
@@ -79,7 +79,7 @@ func TestUpdateHandlerInvalidCounterValue(t *testing.T) {
 
 func TestUpdateHandlerEmptyMetricName(t *testing.T) {
 	storage := repository.NewMemStorage()
-	handler := NewUpdateHandler(storage)
+	handler := NewRouter(storage)
 
 	request := httptest.NewRequest(http.MethodPost, "/update/gauge//67.1", nil)
 	response := httptest.NewRecorder()
@@ -91,7 +91,7 @@ func TestUpdateHandlerEmptyMetricName(t *testing.T) {
 
 func TestUpdateHandlerMissingMetricValue(t *testing.T) {
 	storage := repository.NewMemStorage()
-	handler := NewUpdateHandler(storage)
+	handler := NewRouter(storage)
 
 	request := httptest.NewRequest(http.MethodPost, "/update/gauge/TestGauge", nil)
 	response := httptest.NewRecorder()
@@ -103,7 +103,7 @@ func TestUpdateHandlerMissingMetricValue(t *testing.T) {
 
 func TestUpdateHandlerUnsupportedMethod(t *testing.T) {
 	storage := repository.NewMemStorage()
-	handler := NewUpdateHandler(storage)
+	handler := NewRouter(storage)
 
 	request := httptest.NewRequest(http.MethodGet, "/update/gauge/TestGauge/67.1", nil)
 	response := httptest.NewRecorder()
@@ -115,7 +115,7 @@ func TestUpdateHandlerUnsupportedMethod(t *testing.T) {
 
 func TestUpdateHandlerUnknownPath(t *testing.T) {
 	storage := repository.NewMemStorage()
-	handler := NewUpdateHandler(storage)
+	handler := NewRouter(storage)
 
 	request := httptest.NewRequest(http.MethodPost, "/updater/counter/TestCounter/10", nil)
 	response := httptest.NewRecorder()

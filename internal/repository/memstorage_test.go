@@ -113,3 +113,53 @@ func TestMemStorageGetCounterNotFound(t *testing.T) {
 	_, ok := storage.GetCounter("UnknownCounter")
 	require.False(t, ok)
 }
+
+func TestMemStorageGetAllGauges(t *testing.T) {
+	storage := NewMemStorage()
+	storage.SetGauge("FirstGauge", 67.1)
+	storage.SetGauge("SecondGauge", 76.1)
+
+	gauges := storage.GetAllGauges()
+
+	require.Equal(t, map[string]float64{
+		"FirstGauge":  67.1,
+		"SecondGauge": 76.1,
+	}, gauges)
+}
+
+func TestMemStorageGetAllGaugesReturnsCopy(t *testing.T) {
+	storage := NewMemStorage()
+	storage.SetGauge("TestGauge", 67.1)
+
+	gauges := storage.GetAllGauges()
+	gauges["TestGauge"] = 100.1
+
+	value, ok := storage.GetGauge("TestGauge")
+	require.True(t, ok)
+	require.Equal(t, 67.1, value)
+}
+
+func TestMemStorageGetAllCounters(t *testing.T) {
+	storage := NewMemStorage()
+	storage.AddCounter("FirstCounter", 67)
+	storage.AddCounter("SecondCounter", 76)
+
+	counters := storage.GetAllCounters()
+
+	require.Equal(t, map[string]int64{
+		"FirstCounter":  67,
+		"SecondCounter": 76,
+	}, counters)
+}
+
+func TestMemStorageGetAllCountersReturnsCopy(t *testing.T) {
+	storage := NewMemStorage()
+	storage.AddCounter("TestCounter", 67)
+
+	counters := storage.GetAllCounters()
+	counters["TestCounter"] = 100
+
+	value, ok := storage.GetCounter("TestCounter")
+	require.True(t, ok)
+	require.Equal(t, int64(67), value)
+}
