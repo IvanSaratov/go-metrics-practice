@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -51,4 +52,38 @@ func TestAgentRunStopsWhenContextCanceled(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("expected agent to stop after context cancellation")
 	}
+}
+
+func TestAgentRunContinuesWhenReportFails(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	metrics := NewMetrics()
+	metrics.gauges["TestGauge"] = 67.1
+	agent := NewAgent(metrics, &failingSender{}, time.Hour, time.Millisecond)
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		agent.Run(ctx)
+	}()
+
+	time.Sleep(10 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("expected agent to stop after context cancellation")
+	}
+}
+
+type failingSender struct{}
+
+func (f *failingSender) SendGauge(name string, value float64) error {
+	return errors.New("send gauge failed")
+}
+
+func (f *failingSender) SendCounter(name string, value int64) error {
+	return errors.New("send counter failed")
 }
