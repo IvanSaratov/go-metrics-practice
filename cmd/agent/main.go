@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/IvanSaratov/go-metrics-practice/internal/agent"
+	"github.com/IvanSaratov/go-metrics-practice/internal/helpers"
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
 )
@@ -64,7 +65,7 @@ func runAgent(config agentConfig) error {
 	httpClient := &http.Client{
 		Timeout: 3 * time.Second,
 	}
-	client := agent.NewClient("http://"+config.serverAddress, httpClient)
+	client := agent.NewClient(helpers.NormalizeBaseURL(config.serverAddress), httpClient)
 	metrics := agent.NewMetrics()
 	metricsAgent := agent.NewAgent(metrics, client, config.pollInterval, config.reportInterval)
 
