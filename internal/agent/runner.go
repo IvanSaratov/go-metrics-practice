@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 )
 
 type Agent struct {
@@ -35,7 +37,9 @@ func (a *Agent) Run(ctx context.Context) {
 		case <-pollTicker.C:
 			a.poll()
 		case <-reportTicker.C:
-			_ = a.report()
+			if err := a.report(); err != nil {
+				log.WithError(err).Warn("failed to report metrics")
+			}
 		}
 	}
 }
