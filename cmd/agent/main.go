@@ -36,22 +36,22 @@ func newAgentApp(run func(config agentConfig) error) *cli.App {
 			Value: "localhost:8080",
 			Usage: "HTTP server address",
 		},
-		&cli.IntFlag{
+		&cli.DurationFlag{
 			Name:  "p",
-			Value: 2,
-			Usage: "runtime metrics poll interval in seconds",
+			Value: 2 * time.Second,
+			Usage: "runtime metrics poll interval",
 		},
-		&cli.IntFlag{
+		&cli.DurationFlag{
 			Name:  "r",
-			Value: 10,
-			Usage: "metrics report interval in seconds",
+			Value: 10 * time.Second,
+			Usage: "metrics report interval",
 		},
 	}
 	app.Action = func(ctx *cli.Context) error {
 		return run(agentConfig{
 			serverAddress:  ctx.String("a"),
-			pollInterval:   time.Duration(ctx.Int("p")) * time.Second,
-			reportInterval: time.Duration(ctx.Int("r")) * time.Second,
+			pollInterval:   ctx.Duration("p"),
+			reportInterval: ctx.Duration("r"),
 		})
 	}
 

@@ -29,7 +29,7 @@ func TestAgentAppParsesFlags(t *testing.T) {
 		return nil
 	})
 
-	err := app.Run([]string{"agent", "-a", "localhost:9090", "-p", "3", "-r", "7"})
+	err := app.Run([]string{"agent", "-a", "localhost:9090", "-p", "3s", "-r", "7s"})
 
 	require.NoError(t, err)
 	require.Equal(t, "localhost:9090", got.serverAddress)
