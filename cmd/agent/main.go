@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/IvanSaratov/go-metrics-practice/internal/agent"
-	"github.com/IvanSaratov/go-metrics-practice/internal/helpers"
+	"github.com/IvanSaratov/go-metrics-practice/internal/cliflags"
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
 )
@@ -36,22 +36,22 @@ func newAgentApp(run func(config agentConfig) error) *cli.App {
 			Value: "localhost:8080",
 			Usage: "HTTP server address",
 		},
-		&cli.DurationFlag{
+		&cli.GenericFlag{
 			Name:  "p",
-			Value: 2 * time.Second,
+			Value: cliflags.NewDuration(2 * time.Second),
 			Usage: "runtime metrics poll interval",
 		},
-		&cli.DurationFlag{
+		&cli.GenericFlag{
 			Name:  "r",
-			Value: 10 * time.Second,
+			Value: cliflags.NewDuration(10 * time.Second),
 			Usage: "metrics report interval",
 		},
 	}
 	app.Action = func(ctx *cli.Context) error {
 		return run(agentConfig{
 			serverAddress:  ctx.String("a"),
-			pollInterval:   ctx.Duration("p"),
-			reportInterval: ctx.Duration("r"),
+			pollInterval:   ctx.Generic("p").(*cliflags.Duration).Duration(),
+			reportInterval: ctx.Generic("r").(*cliflags.Duration).Duration(),
 		})
 	}
 
@@ -65,7 +65,7 @@ func runAgent(config agentConfig) error {
 	httpClient := &http.Client{
 		Timeout: 3 * time.Second,
 	}
-	client := agent.NewClient(helpers.NormalizeBaseURL(config.serverAddress), httpClient)
+	client := agent.NewClient(cliflags.NormalizeBaseURL(config.serverAddress), httpClient)
 	metrics := agent.NewMetrics()
 	metricsAgent := agent.NewAgent(metrics, client, config.pollInterval, config.reportInterval)
 

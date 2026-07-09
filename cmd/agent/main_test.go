@@ -23,18 +23,42 @@ func TestAgentAppUsesDefaults(t *testing.T) {
 }
 
 func TestAgentAppParsesFlags(t *testing.T) {
-	var got agentConfig
-	app := newAgentApp(func(config agentConfig) error {
-		got = config
-		return nil
-	})
+	tests := []struct {
+		name               string
+		args               []string
+		wantPollInterval   time.Duration
+		wantReportInterval time.Duration
+	}{
+		{
+			name:               "numeric poll interval and duration report interval",
+			args:               []string{"agent", "-a", "localhost:9090", "-p", "3", "-r", "7s"},
+			wantPollInterval:   3 * time.Second,
+			wantReportInterval: 7 * time.Second,
+		},
+		{
+			name:               "hour and minute intervals",
+			args:               []string{"agent", "-a", "localhost:9090", "-p", "1h", "-r", "2m"},
+			wantPollInterval:   time.Hour,
+			wantReportInterval: 2 * time.Minute,
+		},
+	}
 
-	err := app.Run([]string{"agent", "-a", "localhost:9090", "-p", "3s", "-r", "7s"})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got agentConfig
+			app := newAgentApp(func(config agentConfig) error {
+				got = config
+				return nil
+			})
 
-	require.NoError(t, err)
-	require.Equal(t, "localhost:9090", got.serverAddress)
-	require.Equal(t, 3*time.Second, got.pollInterval)
-	require.Equal(t, 7*time.Second, got.reportInterval)
+			err := app.Run(tt.args)
+
+			require.NoError(t, err)
+			require.Equal(t, "localhost:9090", got.serverAddress)
+			require.Equal(t, tt.wantPollInterval, got.pollInterval)
+			require.Equal(t, tt.wantReportInterval, got.reportInterval)
+		})
+	}
 }
 
 func TestAgentAppRejectsUnknownFlag(t *testing.T) {
