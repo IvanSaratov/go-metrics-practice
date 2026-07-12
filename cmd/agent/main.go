@@ -62,6 +62,7 @@ func runAgent(config agentConfig) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// TODO: Вынести во флаги
 	httpClient := &http.Client{
 		Timeout: 3 * time.Second,
 	}
