@@ -31,9 +31,11 @@ func newServerApp(run func(config serverConfig) error) *cli.App {
 	app.Name = "server"
 	app.Flags = []cli.Flag{
 		&cli.StringFlag{
-			Name:  "a",
-			Value: "localhost:8080",
-			Usage: "HTTP server address",
+			Name:    "a",
+			Aliases: []string{"address"},
+			EnvVars: []string{"ADDRESS"},
+			Value:   "localhost:8080",
+			Usage:   "HTTP server address",
 		},
 	}
 	app.Action = func(ctx *cli.Context) error {
