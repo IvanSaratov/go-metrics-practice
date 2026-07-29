@@ -14,7 +14,9 @@ func NewRouter(storage repository.Storage) http.Handler {
 	listHandler := NewListHandler(storage)
 
 	router.Get("/", listHandler.ServeHTTP)
+	router.Post("/update", updateHandler.ServeJSON)
 	router.Post("/update/{type}/{name}/{value}", updateHandler.ServeHTTP)
+	router.Post("/value", valueHandler.ServeJSON)
 	router.Get("/value/{type}/{name}", valueHandler.ServeHTTP)
 
 	return router
