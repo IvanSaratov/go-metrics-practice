@@ -5,10 +5,14 @@ import (
 
 	"github.com/IvanSaratov/go-metrics-practice/internal/repository"
 	"github.com/go-chi/chi/v5"
+	chimiddleware "github.com/go-chi/chi/v5/middleware"
 )
 
 func NewRouter(storage repository.Storage) http.Handler {
 	router := chi.NewRouter()
+	// Одинаково обрабатываем пути с завершающим слешем и без него.
+	router.Use(chimiddleware.StripSlashes)
+
 	updateHandler := NewUpdateHandler(storage)
 	valueHandler := NewValueHandler(storage)
 	listHandler := NewListHandler(storage)

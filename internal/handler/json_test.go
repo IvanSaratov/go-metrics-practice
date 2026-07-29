@@ -117,6 +117,59 @@ func TestValueJSONCounter(t *testing.T) {
 	require.Nil(t, metric.Value)
 }
 
+func TestUpdateJSONAcceptsTrailingSlash(t *testing.T) {
+	storage := repository.NewMemStorage()
+	router := NewRouter(storage)
+	request := newJSONRequest(
+		t,
+		http.MethodPost,
+		"/update/",
+		`{"id":"TestGauge","type":"gauge","value":67.1}`,
+	)
+	response := httptest.NewRecorder()
+
+	router.ServeHTTP(response, request)
+
+	require.Equal(t, http.StatusOK, response.Code)
+	require.Equal(t, "application/json", response.Header().Get("Content-Type"))
+
+	value, ok := storage.GetGauge("TestGauge")
+	require.True(t, ok)
+	require.Equal(t, 67.1, value)
+
+	metric := decodeMetricResponse(t, response)
+	require.Equal(t, "TestGauge", metric.ID)
+	require.Equal(t, models.Gauge, metric.MType)
+	require.NotNil(t, metric.Value)
+	require.Equal(t, 67.1, *metric.Value)
+	require.Nil(t, metric.Delta)
+}
+
+func TestValueJSONAcceptsTrailingSlash(t *testing.T) {
+	storage := repository.NewMemStorage()
+	storage.SetGauge("TestGauge", 67.1)
+	router := NewRouter(storage)
+	request := newJSONRequest(
+		t,
+		http.MethodPost,
+		"/value/",
+		`{"id":"TestGauge","type":"gauge"}`,
+	)
+	response := httptest.NewRecorder()
+
+	router.ServeHTTP(response, request)
+
+	require.Equal(t, http.StatusOK, response.Code)
+	require.Equal(t, "application/json", response.Header().Get("Content-Type"))
+
+	metric := decodeMetricResponse(t, response)
+	require.Equal(t, "TestGauge", metric.ID)
+	require.Equal(t, models.Gauge, metric.MType)
+	require.NotNil(t, metric.Value)
+	require.Equal(t, 67.1, *metric.Value)
+	require.Nil(t, metric.Delta)
+}
+
 func TestUpdateJSONValidatesRequest(t *testing.T) {
 	largeBody := `{"id":"` + strings.Repeat("a", 1<<20) + `","type":"gauge","value":1}`
 
@@ -240,9 +293,14 @@ func TestValueJSONReadsGaugeStoredThroughLegacyEndpoint(t *testing.T) {
 	router.ServeHTTP(valueResponse, valueRequest)
 
 	require.Equal(t, http.StatusOK, valueResponse.Code)
+	require.Equal(t, "application/json", valueResponse.Header().Get("Content-Type"))
+
 	metric := decodeMetricResponse(t, valueResponse)
+	require.Equal(t, "TestGauge", metric.ID)
+	require.Equal(t, models.Gauge, metric.MType)
 	require.NotNil(t, metric.Value)
 	require.Equal(t, 67.1, *metric.Value)
+	require.Nil(t, metric.Delta)
 }
 
 func TestUpdateJSONPreservesZeroValues(t *testing.T) {
