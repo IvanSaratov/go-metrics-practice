@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -100,11 +101,12 @@ func TestMemStorageAddCounterAddsValue(t *testing.T) {
 	storage := NewMemStorage()
 
 	storage.AddCounter("TestCounter", 67)
-	storage.AddCounter("TestCounter", 10)
+	total := storage.AddCounter("TestCounter", 10)
 
 	value, ok := storage.GetCounter("TestCounter")
 	require.True(t, ok)
 	require.Equal(t, int64(77), value)
+	require.Equal(t, int64(77), total)
 }
 
 func TestMemStorageGetCounterNotFound(t *testing.T) {
@@ -162,4 +164,36 @@ func TestMemStorageGetAllCountersReturnsCopy(t *testing.T) {
 	value, ok := storage.GetCounter("TestCounter")
 	require.True(t, ok)
 	require.Equal(t, int64(67), value)
+}
+
+func TestMemStorageConcurrentAccess(t *testing.T) {
+	const (
+		workers    = 16
+		iterations = 100
+	)
+
+	storage := NewMemStorage()
+	var wg sync.WaitGroup
+	wg.Add(workers)
+
+	for range workers {
+		go func() {
+			defer wg.Done()
+
+			for i := range iterations {
+				storage.SetGauge("TestGauge", float64(i))
+				storage.AddCounter("TestCounter", 1)
+				storage.GetGauge("TestGauge")
+				storage.GetCounter("TestCounter")
+				storage.GetAllGauges()
+				storage.GetAllCounters()
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	value, ok := storage.GetCounter("TestCounter")
+	require.True(t, ok)
+	require.Equal(t, int64(workers*iterations), value)
 }
