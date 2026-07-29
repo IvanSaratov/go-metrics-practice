@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -10,9 +12,11 @@ import (
 	"time"
 
 	"github.com/IvanSaratov/go-metrics-practice/internal/handler"
+	handlermiddleware "github.com/IvanSaratov/go-metrics-practice/internal/handler/middleware"
+	applogger "github.com/IvanSaratov/go-metrics-practice/internal/logger"
 	"github.com/IvanSaratov/go-metrics-practice/internal/repository"
-	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
+	"go.uber.org/zap"
 )
 
 type serverConfig struct {
@@ -20,10 +24,35 @@ type serverConfig struct {
 }
 
 func main() {
-	app := newServerApp(runServer)
-	if err := app.Run(os.Args); err != nil {
-		log.Fatal(err)
+	// Инициализируем наш логер
+	appLogger, err := applogger.New(false)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "create logger: %v\n", err)
+		os.Exit(1)
 	}
+
+	// Запуска программу
+	exitCode := run(os.Args, appLogger)
+	// Ошибка Sync не должна менять код завершения приложения.
+	_ = appLogger.Sync()
+	os.Exit(exitCode)
+}
+
+func run(args []string, appLogger *zap.Logger) int {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// Вот так вот сложно - что бы тестировать
+	app := newServerApp(func(config serverConfig) error {
+		return runServer(ctx, config, appLogger)
+	})
+
+	if err := app.Run(args); err != nil {
+		appLogger.Error("server failed", zap.Error(err))
+		return 1
+	}
+
+	return 0
 }
 
 func newServerApp(run func(config serverConfig) error) *cli.App {
@@ -47,34 +76,54 @@ func newServerApp(run func(config serverConfig) error) *cli.App {
 	return app
 }
 
-func runServer(config serverConfig) error {
+func runServer(ctx context.Context, config serverConfig, appLogger *zap.Logger) error {
+	listener, err := net.Listen("tcp", config.address)
+	if err != nil {
+		return fmt.Errorf("listen on %s: %w", config.address, err)
+	}
+	defer listener.Close()
+
 	storage := repository.NewMemStorage()
 	router := handler.NewRouter(storage)
 
 	server := &http.Server{
 		Addr:    config.address,
-		Handler: router,
+		Handler: handlermiddleware.LoggingMiddleware(appLogger)(router),
 	}
 
+	// Буфер позволяет Serve завершиться, пока выполняется остановка сервера
+	serveErrors := make(chan error, 1)
 	go func() {
-		log.Infof("starting server on %s", config.address)
-
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.WithError(err).Fatal("server failed")
-		}
+		serveErrors <- server.Serve(listener)
 	}()
 
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-	<-stop
+	appLogger.Info("server started", zap.String("address", listener.Addr().String()))
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := server.Shutdown(ctx); err != nil {
-		log.WithError(err).Fatal("server shutdown failed")
+	select {
+	case err := <-serveErrors:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("serve HTTP: %w", err)
+		}
+		appLogger.Info("server stopped")
+		return nil
+	case <-ctx.Done():
+		appLogger.Info("shutdown requested")
 	}
 
-	log.Info("server stopped")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	shutdownErr := server.Shutdown(shutdownCtx)
+	// Ожидаем Serve, чтобы не потерять ошибку и не оставить горутину
+	serveErr := <-serveErrors
+
+	if shutdownErr != nil {
+		return fmt.Errorf("shutdown server: %w", shutdownErr)
+	}
+	if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+		return fmt.Errorf("serve HTTP during shutdown: %w", serveErr)
+	}
+
+	appLogger.Info("server stopped")
 	return nil
 }

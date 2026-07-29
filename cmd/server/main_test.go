@@ -1,9 +1,13 @@
 package main
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestServerAppUsesDefaultAddress(t *testing.T) {
@@ -86,4 +90,49 @@ func TestServerAppRejectsUnknownFlag(t *testing.T) {
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "flag provided but not defined")
+}
+
+func TestRunServerReturnsListenError(t *testing.T) {
+	core, _ := observer.New(zapcore.DebugLevel)
+	log := zap.New(core)
+
+	err := runServer(context.Background(), serverConfig{address: "127.0.0.1:-1"}, log)
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "listen on 127.0.0.1:-1")
+}
+
+func TestRunLogsApplicationError(t *testing.T) {
+	core, observedLogs := observer.New(zapcore.DebugLevel)
+	log := zap.New(core)
+
+	exitCode := run([]string{"server", "-unknown"}, log)
+
+	require.Equal(t, 1, exitCode)
+
+	errorEntries := observedLogs.FilterLevelExact(zapcore.ErrorLevel).All()
+	require.Len(t, errorEntries, 1)
+	require.Equal(t, "server failed", errorEntries[0].Message)
+	require.Contains(t, errorEntries[0].ContextMap(), "error")
+}
+
+func TestRunServerShutsDownWhenContextCancelled(t *testing.T) {
+	core, observedLogs := observer.New(zapcore.DebugLevel)
+	log := zap.New(core)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := runServer(ctx, serverConfig{address: "127.0.0.1:0"}, log)
+
+	require.NoError(t, err)
+	infoEntries := observedLogs.FilterLevelExact(zapcore.InfoLevel).All()
+	messages := make([]string, 0, len(infoEntries))
+	for _, entry := range infoEntries {
+		messages = append(messages, entry.Message)
+	}
+	require.Equal(t, []string{
+		"server started",
+		"shutdown requested",
+		"server stopped",
+	}, messages)
 }
