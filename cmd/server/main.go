@@ -20,7 +20,10 @@ import (
 )
 
 type serverConfig struct {
-	address string
+	address         string
+	storeInterval   time.Duration
+	fileStoragePath string
+	restore         bool
 }
 
 func main() {
@@ -33,7 +36,7 @@ func main() {
 
 	// Запуска программу
 	exitCode := run(os.Args, appLogger)
-	// Ошибка Sync не должна менять код завершения приложения.
+	// Ошибка Sync не должна менять код завершения приложения
 	_ = appLogger.Sync()
 	os.Exit(exitCode)
 }
@@ -60,16 +63,45 @@ func newServerApp(run func(config serverConfig) error) *cli.App {
 	app.Name = "server"
 	app.Flags = []cli.Flag{
 		&cli.StringFlag{
-			Name:    "a",
-			Aliases: []string{"address"},
+			Name:    "address",
+			Aliases: []string{"a"},
 			EnvVars: []string{"ADDRESS"},
 			Value:   "localhost:8080",
 			Usage:   "HTTP server address",
 		},
+		&cli.Int64Flag{
+			Name:    "store-interval",
+			Aliases: []string{"i"},
+			EnvVars: []string{"STORE_INTERVAL"},
+			Value:   300,
+			Usage:   "metrics storage interval in seconds",
+		},
+		&cli.StringFlag{
+			Name:    "file-storage-path",
+			Aliases: []string{"f"},
+			EnvVars: []string{"FILE_STORAGE_PATH"},
+			Value:   "./temp/metrics-db.json",
+			Usage:   "metrics storage file path",
+		},
+		&cli.BoolFlag{
+			Name:    "restore",
+			Aliases: []string{"r"},
+			EnvVars: []string{"RESTORE"},
+			Value:   true,
+			Usage:   "restore metrics from the storage file",
+		},
 	}
 	app.Action = func(ctx *cli.Context) error {
+		storeInterval := ctx.Int64("store-interval")
+		if storeInterval < 0 {
+			return fmt.Errorf("store interval must not be negative")
+		}
+
 		return run(serverConfig{
-			address: ctx.String("a"),
+			address:         ctx.String("address"),
+			storeInterval:   time.Duration(storeInterval) * time.Second,
+			fileStoragePath: ctx.String("file-storage-path"),
+			restore:         ctx.Bool("restore"),
 		})
 	}
 
@@ -79,25 +111,50 @@ func newServerApp(run func(config serverConfig) error) *cli.App {
 // Выносим обхявление всех middleware в отдельную функцию для переопределения последовательности
 func newServerHandler(storage repository.Storage, appLogger *zap.Logger) http.Handler {
 	router := handler.NewRouter(storage)
-	// Логгер считает размер уже сжатого ответа.
+	// Логгер считает размер уже сжатого ответа
 	return handlermiddleware.LoggingMiddleware(appLogger)(
 		handlermiddleware.GzipMiddleware(router),
 	)
 }
 
-func runServer(ctx context.Context, config serverConfig, appLogger *zap.Logger) error {
+func runServer(
+	ctx context.Context,
+	config serverConfig,
+	appLogger *zap.Logger,
+) (resultErr error) {
+	// Теперь новая инициализация
+	storage := repository.NewFileStorage(
+		config.fileStoragePath,
+		config.storeInterval == 0,
+	)
+	if config.restore {
+		if err := storage.Restore(); err != nil {
+			return fmt.Errorf("restore metrics: %w", err)
+		}
+	}
+
 	listener, err := net.Listen("tcp", config.address)
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", config.address, err)
 	}
 	defer listener.Close()
 
-	storage := repository.NewMemStorage()
+	// Запускаем наш таймер с сохранением
+	stopPeriodicSave := startPeriodicSave(config.storeInterval, storage, appLogger)
 
 	server := &http.Server{
 		Addr:    config.address,
 		Handler: newServerHandler(storage, appLogger),
 	}
+	defer func() {
+		stopPeriodicSave()
+		if err := storage.Save(); err != nil {
+			resultErr = errors.Join(
+				resultErr,
+				fmt.Errorf("save metrics on shutdown: %w", err),
+			)
+		}
+	}()
 
 	// Буфер позволяет Serve завершиться, пока выполняется остановка сервера
 	serveErrors := make(chan error, 1)

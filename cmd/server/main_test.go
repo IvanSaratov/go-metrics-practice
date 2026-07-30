@@ -7,8 +7,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/IvanSaratov/go-metrics-practice/internal/repository"
 	"github.com/stretchr/testify/require"
@@ -28,64 +31,61 @@ func TestServerAppUsesDefaultAddress(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, "localhost:8080", got.address)
+	require.Equal(t, 300*time.Second, got.storeInterval)
+	require.Equal(t, "./temp/metrics-db.json", got.fileStoragePath)
+	require.True(t, got.restore)
 }
 
-func TestServerAppParsesAddressFlag(t *testing.T) {
+func TestServerAppParsesFlags(t *testing.T) {
 	var got serverConfig
 	app := newServerApp(func(config serverConfig) error {
 		got = config
 		return nil
 	})
 
-	err := app.Run([]string{"server", "-a", "localhost:9090"})
+	err := app.Run([]string{
+		"server",
+		"-a", "localhost:9090",
+		"-i", "15",
+		"-f", "./custom/metrics.json",
+		"-r=false",
+	})
 
 	require.NoError(t, err)
 	require.Equal(t, "localhost:9090", got.address)
+	require.Equal(t, 15*time.Second, got.storeInterval)
+	require.Equal(t, "./custom/metrics.json", got.fileStoragePath)
+	require.False(t, got.restore)
 }
 
 func TestServerAppParsesEnv(t *testing.T) {
-	tests := []struct {
-		name        string
-		args        []string
-		env         map[string]string
-		wantAddress string
-	}{
-		{
-			name: "env overrides default",
-			args: []string{"server"},
-			env: map[string]string{
-				"ADDRESS": "localhost:9090",
-			},
-			wantAddress: "localhost:9090",
-		},
-		{
-			name: "flag overrides env",
-			args: []string{"server", "-a", "localhost:7777"},
-			env: map[string]string{
-				"ADDRESS": "localhost:9090",
-			},
-			wantAddress: "localhost:7777",
-		},
-	}
+	t.Setenv("ADDRESS", "localhost:9090")
+	t.Setenv("STORE_INTERVAL", "20")
+	t.Setenv("FILE_STORAGE_PATH", "./env/metrics.json")
+	t.Setenv("RESTORE", "false")
+	var got serverConfig
+	app := newServerApp(func(config serverConfig) error {
+		got = config
+		return nil
+	})
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			for k, v := range tt.env {
-				t.Setenv(k, v)
-			}
+	err := app.Run([]string{"server"})
 
-			var got serverConfig
-			app := newServerApp(func(config serverConfig) error {
-				got = config
-				return nil
-			})
+	require.NoError(t, err)
+	require.Equal(t, "localhost:9090", got.address)
+	require.Equal(t, 20*time.Second, got.storeInterval)
+	require.Equal(t, "./env/metrics.json", got.fileStoragePath)
+	require.False(t, got.restore)
+}
 
-			err := app.Run(tt.args)
+func TestServerAppRejectsNegativeStoreInterval(t *testing.T) {
+	app := newServerApp(func(config serverConfig) error {
+		return nil
+	})
 
-			require.NoError(t, err)
-			require.Equal(t, tt.wantAddress, got.address)
-		})
-	}
+	err := app.Run([]string{"server", "-i", "-1"})
+
+	require.Error(t, err)
 }
 
 func TestServerAppRejectsUnknownFlag(t *testing.T) {
@@ -107,6 +107,47 @@ func TestRunServerReturnsListenError(t *testing.T) {
 
 	require.Error(t, err)
 	require.ErrorContains(t, err, "listen on 127.0.0.1:-1")
+}
+
+func TestRunServerRestoresBeforeListening(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metrics-db.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{"invalid":`), 0o600))
+
+	err := runServer(context.Background(), serverConfig{
+		address:         "127.0.0.1:-1",
+		storeInterval:   300 * time.Second,
+		fileStoragePath: path,
+		restore:         true,
+	}, zap.NewNop())
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "restore metrics")
+	require.NotContains(t, err.Error(), "listen on")
+}
+
+func TestSaveMetricsPeriodicallyWritesOnTick(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metrics-db.json")
+	storage := repository.NewFileStorage(path, false)
+	require.NoError(t, storage.SetGauge("TestGauge", 67.1))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ticks := make(chan time.Time)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		saveMetricsPeriodically(ctx, ticks, storage, zap.NewNop())
+	}()
+
+	ticks <- time.Now()
+	close(ticks)
+	<-done
+
+	restored := repository.NewFileStorage(path, false)
+	require.NoError(t, restored.Restore())
+	value, ok := restored.GetGauge("TestGauge")
+	require.True(t, ok)
+	require.Equal(t, 67.1, value)
 }
 
 func TestServerHandlerSupportsGzip(t *testing.T) {
@@ -205,9 +246,17 @@ func TestRunServerShutsDownWhenContextCancelled(t *testing.T) {
 	log := zap.New(core)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
+	storagePath := filepath.Join(t.TempDir(), "metrics-db.json")
 
-	err := runServer(ctx, serverConfig{address: "127.0.0.1:0"}, log)
+	err := runServer(ctx, serverConfig{
+		address:         "127.0.0.1:0",
+		storeInterval:   300 * time.Second,
+		fileStoragePath: storagePath,
+		restore:         false,
+	}, log)
 
+	require.NoError(t, err)
+	_, err = os.Stat(storagePath)
 	require.NoError(t, err)
 	infoEntries := observedLogs.FilterLevelExact(zapcore.InfoLevel).All()
 	messages := make([]string, 0, len(infoEntries))
