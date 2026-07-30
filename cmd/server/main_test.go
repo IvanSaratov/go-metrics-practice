@@ -1,9 +1,16 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/IvanSaratov/go-metrics-practice/internal/repository"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -100,6 +107,83 @@ func TestRunServerReturnsListenError(t *testing.T) {
 
 	require.Error(t, err)
 	require.ErrorContains(t, err, "listen on 127.0.0.1:-1")
+}
+
+func TestServerHandlerSupportsGzip(t *testing.T) {
+	metricID := strings.Repeat("TestGauge", 20)
+	payload := []byte(`{"id":"` + metricID + `","type":"gauge","value":67.1}`)
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed)
+	_, err := writer.Write(payload)
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+
+	core, observedLogs := observer.New(zapcore.DebugLevel)
+	log := zap.New(core)
+	storage := repository.NewMemStorage()
+	request := httptest.NewRequest(http.MethodPost, "/update", &compressed)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Content-Encoding", "gzip")
+	request.Header.Set("Accept-Encoding", "gzip")
+	response := httptest.NewRecorder()
+
+	newServerHandler(storage, log).ServeHTTP(response, request)
+
+	require.Equal(t, http.StatusOK, response.Code)
+	require.Equal(t, "gzip", response.Header().Get("Content-Encoding"))
+
+	reader, err := gzip.NewReader(bytes.NewReader(response.Body.Bytes()))
+	require.NoError(t, err)
+	body, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	require.NoError(t, reader.Close())
+	require.JSONEq(t, string(payload), string(body))
+
+	value, ok := storage.GetGauge(metricID)
+	require.True(t, ok)
+	require.Equal(t, 67.1, value)
+
+	entries := observedLogs.All()
+	require.Len(t, entries, 1)
+	require.EqualValues(t, response.Body.Len(), entries[0].ContextMap()["size"])
+}
+
+func TestServerHandlerRejectsCorruptedGzipRequest(t *testing.T) {
+	payload := []byte(`{"id":"TestGauge","type":"gauge","value":67.1}`)
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed)
+	_, err := writer.Write(payload)
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	body := compressed.Bytes()
+	body[len(body)-1] ^= 0xff
+
+	request := httptest.NewRequest(http.MethodPost, "/update", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Content-Encoding", "gzip")
+	response := httptest.NewRecorder()
+
+	newServerHandler(repository.NewMemStorage(), zap.NewNop()).ServeHTTP(response, request)
+
+	require.Equal(t, http.StatusBadRequest, response.Code)
+}
+
+func TestServerHandlerLimitsDecompressedRequest(t *testing.T) {
+	payload := []byte(`{"id":"` + strings.Repeat("x", (1<<20)+1) + `","type":"gauge","value":67.1}`)
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed)
+	_, err := writer.Write(payload)
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+
+	request := httptest.NewRequest(http.MethodPost, "/update", &compressed)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Content-Encoding", "gzip")
+	response := httptest.NewRecorder()
+
+	newServerHandler(repository.NewMemStorage(), zap.NewNop()).ServeHTTP(response, request)
+
+	require.Equal(t, http.StatusRequestEntityTooLarge, response.Code)
 }
 
 func TestRunLogsApplicationError(t *testing.T) {

@@ -1,7 +1,11 @@
 package agent
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -14,30 +18,39 @@ func TestClientSendGauge(t *testing.T) {
 	var requestMethod string
 	var requestPath string
 	var contentType string
+	var contentEncoding string
+	var acceptEncoding string
 	var metric models.Metrics
 	var decodeErr error
+	var responseErr error
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestMethod = r.Method
 		requestPath = r.URL.Path
 		contentType = r.Header.Get("Content-Type")
-		decodeErr = json.NewDecoder(r.Body).Decode(&metric)
+		contentEncoding = r.Header.Get("Content-Encoding")
+		acceptEncoding = r.Header.Get("Accept-Encoding")
+		metric, decodeErr = decodeGzipMetric(r.Body)
 
 		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Encoding", "gzip")
 		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(metric)
+		responseErr = writeGzipMetric(w, metric)
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, server.Client())
+	client := NewClient(server.URL, compressionDisabledClient())
 
 	err := client.SendGauge("TestGauge", 67.1)
 
 	require.NoError(t, err)
 	require.NoError(t, decodeErr)
+	require.NoError(t, responseErr)
 	require.Equal(t, http.MethodPost, requestMethod)
 	require.Equal(t, "/update", requestPath)
 	require.Equal(t, "application/json", contentType)
+	require.Equal(t, "gzip", contentEncoding)
+	require.Equal(t, "gzip", acceptEncoding)
 	require.Equal(t, "TestGauge", metric.ID)
 	require.Equal(t, models.Gauge, metric.MType)
 	require.NotNil(t, metric.Value)
@@ -49,6 +62,8 @@ func TestClientSendCounter(t *testing.T) {
 	var requestMethod string
 	var requestPath string
 	var contentType string
+	var contentEncoding string
+	var acceptEncoding string
 	var metric models.Metrics
 	var decodeErr error
 
@@ -56,7 +71,9 @@ func TestClientSendCounter(t *testing.T) {
 		requestMethod = r.Method
 		requestPath = r.URL.Path
 		contentType = r.Header.Get("Content-Type")
-		decodeErr = json.NewDecoder(r.Body).Decode(&metric)
+		contentEncoding = r.Header.Get("Content-Encoding")
+		acceptEncoding = r.Header.Get("Accept-Encoding")
+		metric, decodeErr = decodeGzipMetric(r.Body)
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -64,7 +81,7 @@ func TestClientSendCounter(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, server.Client())
+	client := NewClient(server.URL, compressionDisabledClient())
 
 	err := client.SendCounter("TestCounter", 10)
 
@@ -73,6 +90,8 @@ func TestClientSendCounter(t *testing.T) {
 	require.Equal(t, http.MethodPost, requestMethod)
 	require.Equal(t, "/update", requestPath)
 	require.Equal(t, "application/json", contentType)
+	require.Equal(t, "gzip", contentEncoding)
+	require.Equal(t, "gzip", acceptEncoding)
 	require.Equal(t, "TestCounter", metric.ID)
 	require.Equal(t, models.Counter, metric.MType)
 	require.NotNil(t, metric.Delta)
@@ -93,4 +112,72 @@ func TestClientRejectsNonJSONResponse(t *testing.T) {
 
 	require.Error(t, err)
 	require.ErrorContains(t, err, "unexpected Content-Type")
+}
+
+func TestClientRejectsInvalidGzipResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Encoding", "gzip")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("not gzip"))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, compressionDisabledClient())
+
+	err := client.SendGauge("TestGauge", 67.1)
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "decode gzip response")
+}
+
+func TestClientRejectsCorruptedGzipResponse(t *testing.T) {
+	var compressed bytes.Buffer
+	require.NoError(t, writeGzipMetric(&compressed, models.Metrics{
+		ID:    "TestGauge",
+		MType: models.Gauge,
+	}))
+	body := compressed.Bytes()
+	body[len(body)-1] ^= 0xff
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Encoding", "gzip")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, compressionDisabledClient())
+
+	err := client.SendGauge("TestGauge", 67.1)
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "read response body")
+}
+
+func decodeGzipMetric(body io.Reader) (models.Metrics, error) {
+	reader, err := gzip.NewReader(body)
+	if err != nil {
+		return models.Metrics{}, err
+	}
+
+	var metric models.Metrics
+	decodeErr := json.NewDecoder(reader).Decode(&metric)
+	_, readErr := io.Copy(io.Discard, reader)
+	return metric, errors.Join(decodeErr, readErr, reader.Close())
+}
+
+func writeGzipMetric(w io.Writer, metric models.Metrics) error {
+	writer := gzip.NewWriter(w)
+	encodeErr := json.NewEncoder(writer).Encode(metric)
+	return errors.Join(encodeErr, writer.Close())
+}
+
+func compressionDisabledClient() *http.Client {
+	return &http.Client{
+		Transport: &http.Transport{
+			DisableCompression: true,
+		},
+	}
 }

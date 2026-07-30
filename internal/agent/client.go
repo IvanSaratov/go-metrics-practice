@@ -2,16 +2,23 @@ package agent
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"io"
 	"mime"
 	"net/http"
+	"strings"
 
 	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
 )
 
-const jsonContentType = "application/json"
+// Возможно не стоило выносить как константы
+const (
+	jsonContentType  = "application/json"
+	gzipEncoding     = "gzip"
+	identityEncoding = "identity"
+)
 
 type HTTPClient interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -46,7 +53,7 @@ func (c *Client) SendCounter(name string, value int64) error {
 }
 
 func (c *Client) sendMetric(metric models.Metrics) error {
-	body, err := json.Marshal(metric)
+	body, err := encodeGzipJSON(metric)
 	if err != nil {
 		return fmt.Errorf("encode metric: %w", err)
 	}
@@ -60,6 +67,9 @@ func (c *Client) sendMetric(metric models.Metrics) error {
 		return fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", jsonContentType)
+	// Выставляем нужные заголовки
+	req.Header.Set("Content-Encoding", gzipEncoding)
+	req.Header.Set("Accept-Encoding", gzipEncoding)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -67,14 +77,32 @@ func (c *Client) sendMetric(metric models.Metrics) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	responseBody := io.Reader(resp.Body)
+	var gzipReader *gzip.Reader
+
+	switch encoding := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Encoding"))); encoding {
+	case "", identityEncoding:
+	case gzipEncoding:
+		gzipReader, err = gzip.NewReader(resp.Body)
+		if err != nil {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			return fmt.Errorf("decode gzip response: %w", err)
+		}
+		defer gzipReader.Close()
+		responseBody = gzipReader
+	default:
 		_, _ = io.Copy(io.Discard, resp.Body)
+		return fmt.Errorf("unexpected Content-Encoding: %q", encoding)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, responseBody)
 		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
 	mediaType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	if err != nil || mediaType != jsonContentType {
-		_, _ = io.Copy(io.Discard, resp.Body)
+		_, _ = io.Copy(io.Discard, responseBody)
 		return fmt.Errorf(
 			"unexpected Content-Type: %q",
 			resp.Header.Get("Content-Type"),
@@ -82,9 +110,25 @@ func (c *Client) sendMetric(metric models.Metrics) error {
 	}
 
 	// Полностью вычитываем ответ, чтобы HTTP-соединение можно было переиспользовать
-	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+	if _, err := io.Copy(io.Discard, responseBody); err != nil {
 		return fmt.Errorf("read response body: %w", err)
 	}
 
 	return nil
+}
+
+// Заменяем наш стандартный json преобразователь в отдельную функцию для кодирования
+func encodeGzipJSON(metric models.Metrics) ([]byte, error) {
+	var body bytes.Buffer
+	writer := gzip.NewWriter(&body)
+
+	if err := json.NewEncoder(writer).Encode(metric); err != nil {
+		_ = writer.Close()
+		return nil, err
+	}
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+
+	return body.Bytes(), nil
 }

@@ -76,6 +76,15 @@ func newServerApp(run func(config serverConfig) error) *cli.App {
 	return app
 }
 
+// Выносим обхявление всех middleware в отдельную функцию для переопределения последовательности
+func newServerHandler(storage repository.Storage, appLogger *zap.Logger) http.Handler {
+	router := handler.NewRouter(storage)
+	// Логгер считает размер уже сжатого ответа.
+	return handlermiddleware.LoggingMiddleware(appLogger)(
+		handlermiddleware.GzipMiddleware(router),
+	)
+}
+
 func runServer(ctx context.Context, config serverConfig, appLogger *zap.Logger) error {
 	listener, err := net.Listen("tcp", config.address)
 	if err != nil {
@@ -84,11 +93,10 @@ func runServer(ctx context.Context, config serverConfig, appLogger *zap.Logger) 
 	defer listener.Close()
 
 	storage := repository.NewMemStorage()
-	router := handler.NewRouter(storage)
 
 	server := &http.Server{
 		Addr:    config.address,
-		Handler: handlermiddleware.LoggingMiddleware(appLogger)(router),
+		Handler: newServerHandler(storage, appLogger),
 	}
 
 	// Буфер позволяет Serve завершиться, пока выполняется остановка сервера
