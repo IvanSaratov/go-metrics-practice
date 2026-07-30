@@ -43,7 +43,10 @@ func (h *UpdateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		h.storage.SetGauge(metricName, value)
+		if err := h.storage.SetGauge(metricName, value); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -55,7 +58,10 @@ func (h *UpdateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		h.storage.AddCounter(metricName, value)
+		if _, err := h.storage.AddCounter(metricName, value); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -81,14 +87,21 @@ func (h *UpdateHandler) ServeJSON(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusBadRequest, "gauge requires value only")
 			return
 		}
-		h.storage.SetGauge(metric.ID, *metric.Value)
+		if err := h.storage.SetGauge(metric.ID, *metric.Value); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "failed to store metric")
+			return
+		}
 	case models.Counter:
 		if metric.Delta == nil || metric.Value != nil {
 			writeJSONError(w, http.StatusBadRequest, "counter requires delta only")
 			return
 		}
 		// В ответе возвращаем уже накопленное значение counter
-		total := h.storage.AddCounter(metric.ID, *metric.Delta)
+		total, err := h.storage.AddCounter(metric.ID, *metric.Delta)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "failed to store metric")
+			return
+		}
 		metric.Delta = &total
 	default:
 		writeJSONError(w, http.StatusBadRequest, "unsupported metric type")

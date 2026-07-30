@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -386,6 +388,28 @@ func TestValueJSONRejectsMetricValueInLookup(t *testing.T) {
 
 	require.Equal(t, http.StatusBadRequest, response.Code)
 	require.Equal(t, "application/json", response.Header().Get("Content-Type"))
+}
+
+func TestUpdateJSONReturnsInternalErrorWhenSynchronousSaveFails(t *testing.T) {
+	blockedParent := filepath.Join(t.TempDir(), "not-a-directory")
+	require.NoError(t, os.WriteFile(blockedParent, []byte("file"), 0o600))
+	storage := repository.NewFileStorage(
+		filepath.Join(blockedParent, "metrics-db.json"),
+		true,
+	)
+	router := NewRouter(storage)
+	request := newJSONRequest(
+		t,
+		http.MethodPost,
+		"/update",
+		`{"id":"TestGauge","type":"gauge","value":67.1}`,
+	)
+	response := httptest.NewRecorder()
+
+	router.ServeHTTP(response, request)
+
+	require.Equal(t, http.StatusInternalServerError, response.Code)
+	require.JSONEq(t, `{"error":"failed to store metric"}`, response.Body.String())
 }
 
 func TestWriteJSONHandlesEncodingError(t *testing.T) {
