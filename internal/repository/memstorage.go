@@ -3,12 +3,17 @@ package repository
 import "sync"
 
 type Storage interface {
-	SetGauge(name string, value float64)
-	AddCounter(name string, value int64) int64
+	SetGauge(name string, value float64) error
+	AddCounter(name string, value int64) (int64, error)
 	GetGauge(name string) (float64, bool)
 	GetCounter(name string) (int64, bool)
 	GetAllGauges() map[string]float64
 	GetAllCounters() map[string]int64
+}
+
+type metricsSnapshot struct {
+	gauges   map[string]float64
+	counters map[string]int64
 }
 
 type MemStorage struct {
@@ -25,19 +30,20 @@ func NewMemStorage() *MemStorage {
 	}
 }
 
-func (m *MemStorage) SetGauge(name string, value float64) {
+func (m *MemStorage) SetGauge(name string, value float64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	m.gauges[name] = value
+	return nil
 }
 
-func (m *MemStorage) AddCounter(name string, value int64) int64 {
+func (m *MemStorage) AddCounter(name string, value int64) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	m.counters[name] += value
-	return m.counters[name]
+	return m.counters[name], nil
 }
 
 func (m *MemStorage) GetGauge(name string) (float64, bool) {
@@ -60,22 +66,38 @@ func (m *MemStorage) GetAllGauges() map[string]float64 {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	gauges := make(map[string]float64, len(m.gauges))
-	for name, value := range m.gauges {
-		gauges[name] = value
-	}
-
-	return gauges
+	return cloneMap(m.gauges)
 }
 
 func (m *MemStorage) GetAllCounters() map[string]int64 {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	counters := make(map[string]int64, len(m.counters))
-	for name, value := range m.counters {
-		counters[name] = value
-	}
+	return cloneMap(m.counters)
+}
 
-	return counters
+func (m *MemStorage) snapshot() metricsSnapshot {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return metricsSnapshot{
+		gauges:   cloneMap(m.gauges),
+		counters: cloneMap(m.counters),
+	}
+}
+
+func (m *MemStorage) replace(snapshot metricsSnapshot) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.gauges = cloneMap(snapshot.gauges)
+	m.counters = cloneMap(snapshot.counters)
+}
+
+func cloneMap[K comparable, V any](source map[K]V) map[K]V {
+	clone := make(map[K]V, len(source))
+	for key, value := range source {
+		clone[key] = value
+	}
+	return clone
 }

@@ -101,8 +101,9 @@ func TestMemStorageAddCounterAddsValue(t *testing.T) {
 	storage := NewMemStorage()
 
 	storage.AddCounter("TestCounter", 67)
-	total := storage.AddCounter("TestCounter", 10)
+	total, err := storage.AddCounter("TestCounter", 10)
 
+	require.NoError(t, err)
 	value, ok := storage.GetCounter("TestCounter")
 	require.True(t, ok)
 	require.Equal(t, int64(77), value)
