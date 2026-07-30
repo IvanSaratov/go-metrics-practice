@@ -141,11 +141,6 @@ func runServer(
 
 	// Запускаем наш таймер с сохранением
 	stopPeriodicSave := startPeriodicSave(config.storeInterval, storage, appLogger)
-
-	server := &http.Server{
-		Addr:    config.address,
-		Handler: newServerHandler(storage, appLogger),
-	}
 	defer func() {
 		stopPeriodicSave()
 		if err := storage.Save(); err != nil {
@@ -155,6 +150,11 @@ func runServer(
 			)
 		}
 	}()
+
+	server := &http.Server{
+		Addr:    config.address,
+		Handler: newServerHandler(storage, appLogger),
+	}
 
 	// Буфер позволяет Serve завершиться, пока выполняется остановка сервера
 	serveErrors := make(chan error, 1)
