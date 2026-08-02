@@ -11,17 +11,18 @@ import (
 	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
 )
 
-// FileStorage хранит актуальные метрики в памяти и сохраняет их снимки в JSON.
+// Хранит актуальные метрики в памяти и сохраняет их снимки в JSON
 type FileStorage struct {
+	*MemStorage
+
 	mu          sync.Mutex
-	memory      *MemStorage
 	path        string
 	synchronous bool
 }
 
 func NewFileStorage(path string, synchronous bool) *FileStorage {
 	return &FileStorage{
-		memory:      NewMemStorage(),
+		MemStorage:  NewMemStorage(),
 		path:        path,
 		synchronous: synchronous,
 	}
@@ -33,16 +34,16 @@ func (s *FileStorage) SetGauge(name string, value float64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.synchronous {
-		return s.memory.SetGauge(name, value)
+		return s.MemStorage.SetGauge(name, value)
 	}
 
 	// Публикуем новое состояние только после атомарной замены файла
-	snapshot := s.memory.snapshot()
+	snapshot := s.MemStorage.snapshot()
 	snapshot.gauges[name] = value
 	if err := s.saveSnapshot(snapshot); err != nil {
 		return err
 	}
-	s.memory.replace(snapshot)
+	s.MemStorage.replace(snapshot)
 	return nil
 }
 
@@ -50,40 +51,24 @@ func (s *FileStorage) AddCounter(name string, value int64) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.synchronous {
-		return s.memory.AddCounter(name, value)
+		return s.MemStorage.AddCounter(name, value)
 	}
 
-	snapshot := s.memory.snapshot()
+	snapshot := s.MemStorage.snapshot()
 	total := snapshot.counters[name] + value
 	snapshot.counters[name] = total
 	if err := s.saveSnapshot(snapshot); err != nil {
 		return 0, err
 	}
-	s.memory.replace(snapshot)
+	s.MemStorage.replace(snapshot)
 	return total, nil
-}
-
-func (s *FileStorage) GetGauge(name string) (float64, bool) {
-	return s.memory.GetGauge(name)
-}
-
-func (s *FileStorage) GetCounter(name string) (int64, bool) {
-	return s.memory.GetCounter(name)
-}
-
-func (s *FileStorage) GetAllGauges() map[string]float64 {
-	return s.memory.GetAllGauges()
-}
-
-func (s *FileStorage) GetAllCounters() map[string]int64 {
-	return s.memory.GetAllCounters()
 }
 
 func (s *FileStorage) Save() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.saveSnapshot(s.memory.snapshot())
+	return s.saveSnapshot(s.MemStorage.snapshot())
 }
 
 func (s *FileStorage) Restore() error {
@@ -98,7 +83,7 @@ func (s *FileStorage) Restore() error {
 		return err
 	}
 
-	s.memory.replace(snapshot)
+	s.MemStorage.replace(snapshot)
 	return nil
 }
 
@@ -114,9 +99,12 @@ func (s *FileStorage) saveSnapshot(snapshot metricsSnapshot) error {
 		return fmt.Errorf("create temporary metrics file: %w", err)
 	}
 	tempPath := file.Name()
+	fileOpen := true
 	removeTemporary := true
 	defer func() {
-		_ = file.Close()
+		if fileOpen {
+			_ = file.Close()
+		}
 		if removeTemporary {
 			_ = os.Remove(tempPath)
 		}
@@ -128,8 +116,10 @@ func (s *FileStorage) saveSnapshot(snapshot metricsSnapshot) error {
 	if err := file.Sync(); err != nil {
 		return fmt.Errorf("sync metrics file: %w", err)
 	}
-	if err := file.Close(); err != nil {
-		return fmt.Errorf("close metrics file: %w", err)
+	closeErr := file.Close()
+	fileOpen = false
+	if closeErr != nil {
+		return fmt.Errorf("close metrics file: %w", closeErr)
 	}
 	if err := os.Rename(tempPath, s.path); err != nil {
 		return fmt.Errorf("replace metrics file: %w", err)
