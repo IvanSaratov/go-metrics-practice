@@ -29,8 +29,6 @@ func NewFileStorage(path string, synchronous bool) *FileStorage {
 	}
 }
 
-var _ Storage = (*FileStorage)(nil)
-
 func (s *FileStorage) SetGauge(ctx context.Context, name string, value float64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
