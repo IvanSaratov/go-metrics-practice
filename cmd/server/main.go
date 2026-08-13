@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/IvanSaratov/go-metrics-practice/internal/config/db"
 	"github.com/IvanSaratov/go-metrics-practice/internal/handler"
 	handlermiddleware "github.com/IvanSaratov/go-metrics-practice/internal/handler/middleware"
 	applogger "github.com/IvanSaratov/go-metrics-practice/internal/logger"
@@ -24,6 +25,7 @@ type serverConfig struct {
 	storeInterval   time.Duration
 	fileStoragePath string
 	restore         bool
+	databaseDSN     string
 }
 
 func main() {
@@ -90,6 +92,12 @@ func newServerApp(run func(config serverConfig) error) *cli.App {
 			Value:   true,
 			Usage:   "restore metrics from the storage file",
 		},
+		&cli.StringFlag{
+			Name:    "database-dsn",
+			Aliases: []string{"d"},
+			EnvVars: []string{"DATABASE_DSN"},
+			Usage:   "PostgreSQL connection string",
+		},
 	}
 	app.Action = func(ctx *cli.Context) error {
 		storeInterval := ctx.Int64("store-interval")
@@ -102,6 +110,7 @@ func newServerApp(run func(config serverConfig) error) *cli.App {
 			storeInterval:   time.Duration(storeInterval) * time.Second,
 			fileStoragePath: ctx.String("file-storage-path"),
 			restore:         ctx.Bool("restore"),
+			databaseDSN:     ctx.String("database-dsn"),
 		})
 	}
 
@@ -122,7 +131,6 @@ func runServer(
 	config serverConfig,
 	appLogger *zap.Logger,
 ) (resultErr error) {
-	// Теперь новая инициализация
 	storage := repository.NewFileStorage(
 		config.fileStoragePath,
 		config.storeInterval == 0,
@@ -132,6 +140,16 @@ func runServer(
 			return fmt.Errorf("restore metrics: %w", err)
 		}
 	}
+
+	database, err := db.Open(config.databaseDSN)
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+	defer func() {
+		if err := database.Close(); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("close database: %w", err))
+		}
+	}()
 
 	listener, err := net.Listen("tcp", config.address)
 	if err != nil {

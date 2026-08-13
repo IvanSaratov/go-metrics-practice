@@ -34,6 +34,7 @@ func TestServerAppUsesDefaultAddress(t *testing.T) {
 	require.Equal(t, 300*time.Second, got.storeInterval)
 	require.Equal(t, "./temp/metrics-db.json", got.fileStoragePath)
 	require.True(t, got.restore)
+	require.Empty(t, got.databaseDSN)
 }
 
 func TestServerAppParsesFlags(t *testing.T) {
@@ -49,6 +50,7 @@ func TestServerAppParsesFlags(t *testing.T) {
 		"-i", "15",
 		"-f", "./custom/metrics.json",
 		"-r=false",
+		"-d", "postgres://flag-user:flag-password@localhost:5432/flag-db?sslmode=disable",
 	})
 
 	require.NoError(t, err)
@@ -56,6 +58,11 @@ func TestServerAppParsesFlags(t *testing.T) {
 	require.Equal(t, 15*time.Second, got.storeInterval)
 	require.Equal(t, "./custom/metrics.json", got.fileStoragePath)
 	require.False(t, got.restore)
+	require.Equal(
+		t,
+		"postgres://flag-user:flag-password@localhost:5432/flag-db?sslmode=disable",
+		got.databaseDSN,
+	)
 }
 
 func TestServerAppParsesEnv(t *testing.T) {
@@ -63,6 +70,10 @@ func TestServerAppParsesEnv(t *testing.T) {
 	t.Setenv("STORE_INTERVAL", "20")
 	t.Setenv("FILE_STORAGE_PATH", "./env/metrics.json")
 	t.Setenv("RESTORE", "false")
+	t.Setenv(
+		"DATABASE_DSN",
+		"postgres://env-user:env-password@localhost:5432/env-db?sslmode=disable",
+	)
 	var got serverConfig
 	app := newServerApp(func(config serverConfig) error {
 		got = config
@@ -76,6 +87,56 @@ func TestServerAppParsesEnv(t *testing.T) {
 	require.Equal(t, 20*time.Second, got.storeInterval)
 	require.Equal(t, "./env/metrics.json", got.fileStoragePath)
 	require.False(t, got.restore)
+	require.Equal(
+		t,
+		"postgres://env-user:env-password@localhost:5432/env-db?sslmode=disable",
+		got.databaseDSN,
+	)
+}
+
+func TestServerAppDatabaseDSNFlagOverridesEnvironment(t *testing.T) {
+	t.Setenv(
+		"DATABASE_DSN",
+		"postgres://env-user:env-password@localhost:5432/env-db?sslmode=disable",
+	)
+	var got serverConfig
+	app := newServerApp(func(config serverConfig) error {
+		got = config
+		return nil
+	})
+
+	err := app.Run([]string{
+		"server",
+		"-d", "postgres://flag-user:flag-password@localhost:5432/flag-db?sslmode=disable",
+	})
+
+	require.NoError(t, err)
+	require.Equal(
+		t,
+		"postgres://flag-user:flag-password@localhost:5432/flag-db?sslmode=disable",
+		got.databaseDSN,
+	)
+}
+
+func TestServerAppParsesDatabaseDSNFlag(t *testing.T) {
+	var got serverConfig
+	app := newServerApp(func(config serverConfig) error {
+		got = config
+		return nil
+	})
+
+	err := app.Run([]string{
+		"server",
+		"--database-dsn",
+		"postgres://url-user:url-password@localhost:5432/url-db?sslmode=disable",
+	})
+
+	require.NoError(t, err)
+	require.Equal(
+		t,
+		"postgres://url-user:url-password@localhost:5432/url-db?sslmode=disable",
+		got.databaseDSN,
+	)
 }
 
 func TestServerAppRejectsNegativeStoreInterval(t *testing.T) {
@@ -107,6 +168,17 @@ func TestRunServerReturnsListenError(t *testing.T) {
 
 	require.Error(t, err)
 	require.ErrorContains(t, err, "listen on 127.0.0.1:-1")
+}
+
+func TestRunServerRejectsInvalidDatabaseDSNBeforeListening(t *testing.T) {
+	err := runServer(context.Background(), serverConfig{
+		address:     "127.0.0.1:-1",
+		databaseDSN: "postgres://%",
+	}, zap.NewNop())
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "open database")
+	require.NotContains(t, err.Error(), "listen on")
 }
 
 func TestRunServerRestoresBeforeListening(t *testing.T) {
@@ -253,6 +325,8 @@ func TestRunServerShutsDownWhenContextCancelled(t *testing.T) {
 		storeInterval:   300 * time.Second,
 		fileStoragePath: storagePath,
 		restore:         false,
+		databaseDSN: "postgres://metrics:metrics@127.0.0.1:1/metrics" +
+			"?sslmode=disable&connect_timeout=1",
 	}, log)
 
 	require.NoError(t, err)
