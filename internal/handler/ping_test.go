@@ -36,3 +36,14 @@ func TestPingHandlerReturnsInternalServerErrorWhenDatabaseIsUnavailable(t *testi
 
 	require.Equal(t, http.StatusInternalServerError, response.Code)
 }
+
+func TestPingHandlerReturnsInternalServerErrorWithoutDatabase(t *testing.T) {
+	server := NewServer(repository.NewMemStorage(), nil)
+	request := httptest.NewRequest(http.MethodGet, "/ping", nil)
+	response := httptest.NewRecorder()
+
+	require.NotPanics(t, func() {
+		server.ServeHTTP(response, request)
+	})
+	require.Equal(t, http.StatusInternalServerError, response.Code)
+}

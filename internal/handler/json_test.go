@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -29,7 +30,8 @@ func TestUpdateJSONGauge(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.Code)
 	require.Equal(t, "application/json", response.Header().Get("Content-Type"))
 
-	value, ok := storage.GetGauge("TestGauge")
+	value, ok, err := storage.GetGauge(context.Background(), "TestGauge")
+	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, 67.1, value)
 
@@ -43,7 +45,8 @@ func TestUpdateJSONGauge(t *testing.T) {
 
 func TestUpdateJSONCounterReturnsAccumulatedValue(t *testing.T) {
 	storage := repository.NewMemStorage()
-	storage.AddCounter("TestCounter", 7)
+	_, err := storage.AddCounter(context.Background(), "TestCounter", 7)
+	require.NoError(t, err)
 	router := newTestServer(storage)
 	request := newJSONRequest(t, http.MethodPost, "/update", `{
 		"id": "TestCounter",
@@ -57,7 +60,8 @@ func TestUpdateJSONCounterReturnsAccumulatedValue(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.Code)
 	require.Equal(t, "application/json", response.Header().Get("Content-Type"))
 
-	value, ok := storage.GetCounter("TestCounter")
+	value, ok, err := storage.GetCounter(context.Background(), "TestCounter")
+	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, int64(10), value)
 
@@ -71,7 +75,7 @@ func TestUpdateJSONCounterReturnsAccumulatedValue(t *testing.T) {
 
 func TestValueJSONGauge(t *testing.T) {
 	storage := repository.NewMemStorage()
-	storage.SetGauge("TestGauge", 67.1)
+	require.NoError(t, storage.SetGauge(context.Background(), "TestGauge", 67.1))
 	router := newTestServer(storage)
 	request := newJSONRequest(
 		t,
@@ -96,7 +100,8 @@ func TestValueJSONGauge(t *testing.T) {
 
 func TestValueJSONCounter(t *testing.T) {
 	storage := repository.NewMemStorage()
-	storage.AddCounter("TestCounter", 10)
+	_, err := storage.AddCounter(context.Background(), "TestCounter", 10)
+	require.NoError(t, err)
 	router := newTestServer(storage)
 	request := newJSONRequest(
 		t,
@@ -135,7 +140,8 @@ func TestUpdateJSONAcceptsTrailingSlash(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.Code)
 	require.Equal(t, "application/json", response.Header().Get("Content-Type"))
 
-	value, ok := storage.GetGauge("TestGauge")
+	value, ok, err := storage.GetGauge(context.Background(), "TestGauge")
+	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, 67.1, value)
 
@@ -149,7 +155,7 @@ func TestUpdateJSONAcceptsTrailingSlash(t *testing.T) {
 
 func TestValueJSONAcceptsTrailingSlash(t *testing.T) {
 	storage := repository.NewMemStorage()
-	storage.SetGauge("TestGauge", 67.1)
+	require.NoError(t, storage.SetGauge(context.Background(), "TestGauge", 67.1))
 	router := newTestServer(storage)
 	request := newJSONRequest(
 		t,

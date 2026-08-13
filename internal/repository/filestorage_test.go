@@ -12,18 +12,20 @@ func TestFileStorageSavesAndRestoresMetrics(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "temp", "metrics-db.json")
 	storage := NewFileStorage(path, true)
 
-	require.NoError(t, storage.SetGauge("LastGC", 1257894000000000000))
-	total, err := storage.AddCounter("NumGC", 42)
+	require.NoError(t, storage.SetGauge(testContext, "LastGC", 1257894000000000000))
+	total, err := storage.AddCounter(testContext, "NumGC", 42)
 	require.NoError(t, err)
 	require.Equal(t, int64(42), total)
 
 	restored := NewFileStorage(path, false)
 	require.NoError(t, restored.Restore())
 
-	gauge, gaugeOK := restored.GetGauge("LastGC")
+	gauge, gaugeOK, err := restored.GetGauge(testContext, "LastGC")
+	require.NoError(t, err)
 	require.True(t, gaugeOK)
 	require.Equal(t, float64(1257894000000000000), gauge)
-	counter, counterOK := restored.GetCounter("NumGC")
+	counter, counterOK, err := restored.GetCounter(testContext, "NumGC")
+	require.NoError(t, err)
 	require.True(t, counterOK)
 	require.Equal(t, int64(42), counter)
 }
@@ -31,7 +33,7 @@ func TestFileStorageSavesAndRestoresMetrics(t *testing.T) {
 func TestFileStoragePeriodicModeWritesOnlyOnSave(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "metrics-db.json")
 	storage := NewFileStorage(path, false)
-	require.NoError(t, storage.SetGauge("TestGauge", 67.1))
+	require.NoError(t, storage.SetGauge(testContext, "TestGauge", 67.1))
 
 	_, err := os.Stat(path)
 	require.ErrorIs(t, err, os.ErrNotExist)
@@ -68,9 +70,10 @@ func TestFileStorageFailedSynchronousSaveKeepsPreviousState(t *testing.T) {
 		true,
 	)
 
-	err := storage.SetGauge("TestGauge", 67.1)
+	err := storage.SetGauge(testContext, "TestGauge", 67.1)
 
 	require.Error(t, err)
-	_, ok := storage.GetGauge("TestGauge")
+	_, ok, readErr := storage.GetGauge(testContext, "TestGauge")
+	require.NoError(t, readErr)
 	require.False(t, ok)
 }

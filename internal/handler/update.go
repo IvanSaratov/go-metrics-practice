@@ -43,7 +43,7 @@ func (h *UpdateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if err := h.storage.SetGauge(metricName, value); err != nil {
+		if err := h.storage.SetGauge(r.Context(), metricName, value); err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
@@ -58,7 +58,7 @@ func (h *UpdateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if _, err := h.storage.AddCounter(metricName, value); err != nil {
+		if _, err := h.storage.AddCounter(r.Context(), metricName, value); err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
@@ -87,7 +87,7 @@ func (h *UpdateHandler) ServeJSON(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusBadRequest, "gauge requires value only")
 			return
 		}
-		if err := h.storage.SetGauge(metric.ID, *metric.Value); err != nil {
+		if err := h.storage.SetGauge(r.Context(), metric.ID, *metric.Value); err != nil {
 			writeJSONError(w, http.StatusInternalServerError, "failed to store metric")
 			return
 		}
@@ -97,7 +97,7 @@ func (h *UpdateHandler) ServeJSON(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// В ответе возвращаем уже накопленное значение counter
-		total, err := h.storage.AddCounter(metric.ID, *metric.Delta)
+		total, err := h.storage.AddCounter(r.Context(), metric.ID, *metric.Delta)
 		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, "failed to store metric")
 			return

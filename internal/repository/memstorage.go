@@ -1,15 +1,9 @@
 package repository
 
-import "sync"
-
-type Storage interface {
-	SetGauge(name string, value float64) error
-	AddCounter(name string, value int64) (int64, error)
-	GetGauge(name string) (float64, bool)
-	GetCounter(name string) (int64, bool)
-	GetAllGauges() map[string]float64
-	GetAllCounters() map[string]int64
-}
+import (
+	"context"
+	"sync"
+)
 
 type metricsSnapshot struct {
 	gauges   map[string]float64
@@ -30,7 +24,7 @@ func NewMemStorage() *MemStorage {
 	}
 }
 
-func (m *MemStorage) SetGauge(name string, value float64) error {
+func (m *MemStorage) SetGauge(_ context.Context, name string, value float64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -38,7 +32,7 @@ func (m *MemStorage) SetGauge(name string, value float64) error {
 	return nil
 }
 
-func (m *MemStorage) AddCounter(name string, value int64) (int64, error) {
+func (m *MemStorage) AddCounter(_ context.Context, name string, value int64) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -46,34 +40,34 @@ func (m *MemStorage) AddCounter(name string, value int64) (int64, error) {
 	return m.counters[name], nil
 }
 
-func (m *MemStorage) GetGauge(name string) (float64, bool) {
+func (m *MemStorage) GetGauge(_ context.Context, name string) (float64, bool, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	value, ok := m.gauges[name]
-	return value, ok
+	return value, ok, nil
 }
 
-func (m *MemStorage) GetCounter(name string) (int64, bool) {
+func (m *MemStorage) GetCounter(_ context.Context, name string) (int64, bool, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	value, ok := m.counters[name]
-	return value, ok
+	return value, ok, nil
 }
 
-func (m *MemStorage) GetAllGauges() map[string]float64 {
+func (m *MemStorage) GetAllGauges(_ context.Context) (map[string]float64, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	return cloneMap(m.gauges)
+	return cloneMap(m.gauges), nil
 }
 
-func (m *MemStorage) GetAllCounters() map[string]int64 {
+func (m *MemStorage) GetAllCounters(_ context.Context) (map[string]int64, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	return cloneMap(m.counters)
+	return cloneMap(m.counters), nil
 }
 
 func (m *MemStorage) snapshot() metricsSnapshot {

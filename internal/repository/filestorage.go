@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,11 +31,11 @@ func NewFileStorage(path string, synchronous bool) *FileStorage {
 
 var _ Storage = (*FileStorage)(nil)
 
-func (s *FileStorage) SetGauge(name string, value float64) error {
+func (s *FileStorage) SetGauge(ctx context.Context, name string, value float64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.synchronous {
-		return s.MemStorage.SetGauge(name, value)
+		return s.MemStorage.SetGauge(ctx, name, value)
 	}
 
 	// Публикуем новое состояние только после атомарной замены файла
@@ -47,11 +48,15 @@ func (s *FileStorage) SetGauge(name string, value float64) error {
 	return nil
 }
 
-func (s *FileStorage) AddCounter(name string, value int64) (int64, error) {
+func (s *FileStorage) AddCounter(
+	ctx context.Context,
+	name string,
+	value int64,
+) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.synchronous {
-		return s.MemStorage.AddCounter(name, value)
+		return s.MemStorage.AddCounter(ctx, name, value)
 	}
 
 	snapshot := s.MemStorage.snapshot()

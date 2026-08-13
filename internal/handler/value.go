@@ -28,7 +28,11 @@ func (h *ValueHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if metricType == "gauge" {
-		value, ok := h.storage.GetGauge(metricName)
+		value, ok, err := h.storage.GetGauge(r.Context(), metricName)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		if !ok {
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -40,7 +44,11 @@ func (h *ValueHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if metricType == "counter" {
-		value, ok := h.storage.GetCounter(metricName)
+		value, ok, err := h.storage.GetCounter(r.Context(), metricName)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		if !ok {
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -72,7 +80,11 @@ func (h *ValueHandler) ServeJSON(w http.ResponseWriter, r *http.Request) {
 
 	switch metric.MType {
 	case models.Gauge:
-		value, ok := h.storage.GetGauge(metric.ID)
+		value, ok, err := h.storage.GetGauge(r.Context(), metric.ID)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "failed to read metric")
+			return
+		}
 		if !ok {
 			writeJSONError(w, http.StatusNotFound, "metric not found")
 			return
@@ -80,7 +92,11 @@ func (h *ValueHandler) ServeJSON(w http.ResponseWriter, r *http.Request) {
 		metric.Value = &value
 		metric.Delta = nil
 	case models.Counter:
-		value, ok := h.storage.GetCounter(metric.ID)
+		value, ok, err := h.storage.GetCounter(r.Context(), metric.ID)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "failed to read metric")
+			return
+		}
 		if !ok {
 			writeJSONError(w, http.StatusNotFound, "metric not found")
 			return

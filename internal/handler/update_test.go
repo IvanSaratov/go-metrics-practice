@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -20,7 +21,8 @@ func TestUpdateHandlerUpdateGauge(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, response.Code)
 
-	value, ok := storage.GetGauge("TestGauge")
+	value, ok, err := storage.GetGauge(context.Background(), "TestGauge")
+	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, 67.1, value)
 }
@@ -36,7 +38,8 @@ func TestUpdateHandlerUpdateCounter(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, response.Code)
 
-	value, ok := storage.GetCounter("TestCounter")
+	value, ok, err := storage.GetCounter(context.Background(), "TestCounter")
+	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, int64(10), value)
 }
@@ -80,7 +83,8 @@ func TestUpdateHandlerRejectsNonFiniteGauge(t *testing.T) {
 			handler.ServeHTTP(response, request)
 
 			require.Equal(t, http.StatusBadRequest, response.Code)
-			_, ok := storage.GetGauge("TestGauge")
+			_, ok, err := storage.GetGauge(context.Background(), "TestGauge")
+			require.NoError(t, err)
 			require.False(t, ok)
 		})
 	}

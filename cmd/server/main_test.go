@@ -215,7 +215,7 @@ func TestRunServerRestoresBeforeListening(t *testing.T) {
 func TestSaveMetricsPeriodicallyWritesOnTick(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "metrics-db.json")
 	storage := repository.NewFileStorage(path, false)
-	require.NoError(t, storage.SetGauge("TestGauge", 67.1))
+	require.NoError(t, storage.SetGauge(context.Background(), "TestGauge", 67.1))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -232,7 +232,8 @@ func TestSaveMetricsPeriodicallyWritesOnTick(t *testing.T) {
 
 	restored := repository.NewFileStorage(path, false)
 	require.NoError(t, restored.Restore())
-	value, ok := restored.GetGauge("TestGauge")
+	value, ok, err := restored.GetGauge(context.Background(), "TestGauge")
+	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, 67.1, value)
 }
@@ -267,7 +268,8 @@ func TestServerHandlerSupportsGzip(t *testing.T) {
 	require.NoError(t, reader.Close())
 	require.JSONEq(t, string(payload), string(body))
 
-	value, ok := storage.GetGauge(metricID)
+	value, ok, err := storage.GetGauge(context.Background(), metricID)
+	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, 67.1, value)
 

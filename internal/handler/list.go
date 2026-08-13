@@ -52,19 +52,30 @@ func NewListHandler(storage repository.Storage) *ListHandler {
 }
 
 func (h *ListHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	gauges, err := h.storage.GetAllGauges(r.Context())
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	counters, err := h.storage.GetAllCounters(r.Context())
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
 	view := listView{
 		Gauges:   make([]metricView, 0),
 		Counters: make([]metricView, 0),
 	}
 
-	for name, value := range h.storage.GetAllGauges() {
+	for name, value := range gauges {
 		view.Gauges = append(view.Gauges, metricView{
 			Name:  name,
 			Value: formatGauge(value),
 		})
 	}
 
-	for name, value := range h.storage.GetAllCounters() {
+	for name, value := range counters {
 		view.Counters = append(view.Counters, metricView{
 			Name:  name,
 			Value: formatCounter(value),
