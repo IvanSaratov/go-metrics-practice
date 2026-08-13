@@ -1,8 +1,23 @@
 package agent
 
 import (
+	"bytes"
+	"compress/gzip"
+	"encoding/json"
 	"fmt"
+	"io"
+	"mime"
 	"net/http"
+	"strings"
+
+	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
+)
+
+// Возможно не стоило выносить как константы
+const (
+	jsonContentType  = "application/json"
+	gzipEncoding     = "gzip"
+	identityEncoding = "identity"
 )
 
 type HTTPClient interface {
@@ -22,31 +37,98 @@ func NewClient(baseURL string, httpClient HTTPClient) *Client {
 }
 
 func (c *Client) SendGauge(name string, value float64) error {
-	return c.sendMetric("gauge", name, fmt.Sprintf("%v", value))
+	return c.sendMetric(models.Metrics{
+		ID:    name,
+		MType: models.Gauge,
+		Value: &value,
+	})
 }
 
 func (c *Client) SendCounter(name string, value int64) error {
-	return c.sendMetric("counter", name, fmt.Sprintf("%d", value))
+	return c.sendMetric(models.Metrics{
+		ID:    name,
+		MType: models.Counter,
+		Delta: &value,
+	})
 }
 
-func (c *Client) sendMetric(metricType string, name string, value string) error {
-	url := fmt.Sprintf("%s/update/%s/%s/%s", c.baseURL, metricType, name, value)
-
-	req, err := http.NewRequest(http.MethodPost, url, nil)
+func (c *Client) sendMetric(metric models.Metrics) error {
+	body, err := encodeGzipJSON(metric)
 	if err != nil {
-		return err
+		return fmt.Errorf("encode metric: %w", err)
 	}
-	req.Header.Set("Content-Type", "text/plain")
+
+	req, err := http.NewRequest(
+		http.MethodPost,
+		c.baseURL+"/update",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", jsonContentType)
+	// Выставляем нужные заголовки
+	req.Header.Set("Content-Encoding", gzipEncoding)
+	req.Header.Set("Accept-Encoding", gzipEncoding)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("send metric: %w", err)
 	}
 	defer resp.Body.Close()
 
+	responseBody := io.Reader(resp.Body)
+	var gzipReader *gzip.Reader
+
+	switch encoding := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Encoding"))); encoding {
+	case "", identityEncoding:
+	case gzipEncoding:
+		gzipReader, err = gzip.NewReader(resp.Body)
+		if err != nil {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			return fmt.Errorf("decode gzip response: %w", err)
+		}
+		defer gzipReader.Close()
+		responseBody = gzipReader
+	default:
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return fmt.Errorf("unexpected Content-Encoding: %q", encoding)
+	}
+
 	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, responseBody)
 		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
+	mediaType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	if err != nil || mediaType != jsonContentType {
+		_, _ = io.Copy(io.Discard, responseBody)
+		return fmt.Errorf(
+			"unexpected Content-Type: %q",
+			resp.Header.Get("Content-Type"),
+		)
+	}
+
+	// Полностью вычитываем ответ, чтобы HTTP-соединение можно было переиспользовать
+	if _, err := io.Copy(io.Discard, responseBody); err != nil {
+		return fmt.Errorf("read response body: %w", err)
+	}
+
 	return nil
+}
+
+// Заменяем наш стандартный json преобразователь в отдельную функцию для кодирования
+func encodeGzipJSON(metric models.Metrics) ([]byte, error) {
+	var body bytes.Buffer
+	writer := gzip.NewWriter(&body)
+
+	if err := json.NewEncoder(writer).Encode(metric); err != nil {
+		_ = writer.Close()
+		return nil, err
+	}
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+
+	return body.Bytes(), nil
 }

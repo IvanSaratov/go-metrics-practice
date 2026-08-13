@@ -65,6 +65,27 @@ func TestUpdateHandlerInvalidGaugeValue(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, response.Code)
 }
 
+func TestUpdateHandlerRejectsNonFiniteGauge(t *testing.T) {
+	for _, value := range []string{"NaN", "+Inf", "-Inf"} {
+		t.Run(value, func(t *testing.T) {
+			storage := repository.NewMemStorage()
+			handler := NewRouter(storage)
+			request := httptest.NewRequest(
+				http.MethodPost,
+				"/update/gauge/TestGauge/"+value,
+				nil,
+			)
+			response := httptest.NewRecorder()
+
+			handler.ServeHTTP(response, request)
+
+			require.Equal(t, http.StatusBadRequest, response.Code)
+			_, ok := storage.GetGauge("TestGauge")
+			require.False(t, ok)
+		})
+	}
+}
+
 func TestUpdateHandlerInvalidCounterValue(t *testing.T) {
 	storage := repository.NewMemStorage()
 	handler := NewRouter(storage)
