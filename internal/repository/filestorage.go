@@ -67,6 +67,30 @@ func (s *FileStorage) AddCounter(
 	return total, nil
 }
 
+func (s *FileStorage) UpdateBatch(_ context.Context, metrics []models.Metrics) error {
+	// Общий метод валидации интерфейса
+	if err := validateBatch(metrics); err != nil {
+		return err
+	}
+	if len(metrics) == 0 {
+		return nil
+	}
+
+	// Можно все сделать одной транзакцией
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	snapshot := s.MemStorage.snapshot()
+	applyBatch(snapshot, metrics)
+	if s.synchronous {
+		if err := s.saveSnapshot(snapshot); err != nil {
+			return err
+		}
+	}
+	s.MemStorage.replace(snapshot)
+	return nil
+}
+
 func (s *FileStorage) Save() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

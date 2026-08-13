@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,6 +29,10 @@ func (s *readErrorStorage) SetGauge(context.Context, string, float64) error {
 
 func (s *readErrorStorage) AddCounter(context.Context, string, int64) (int64, error) {
 	return 0, nil
+}
+
+func (s *readErrorStorage) UpdateBatch(context.Context, []models.Metrics) error {
+	return nil
 }
 
 func (s *readErrorStorage) GetGauge(context.Context, string) (float64, bool, error) {

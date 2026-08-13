@@ -3,6 +3,8 @@ package repository
 import (
 	"context"
 	"sync"
+
+	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
 )
 
 type metricsSnapshot struct {
@@ -38,6 +40,27 @@ func (m *MemStorage) AddCounter(_ context.Context, name string, value int64) (in
 
 	m.counters[name] += value
 	return m.counters[name], nil
+}
+
+func (m *MemStorage) UpdateBatch(_ context.Context, metrics []models.Metrics) error {
+	// Общеинтерфейсный метод
+	if err := validateBatch(metrics); err != nil {
+		return err
+	}
+	if len(metrics) == 0 {
+		return nil
+	}
+
+	// Будем блокировать только один раз для memory
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	applyBatch(metricsSnapshot{
+		gauges:   m.gauges,
+		counters: m.counters,
+	}, metrics)
+
+	return nil
 }
 
 func (m *MemStorage) GetGauge(_ context.Context, name string) (float64, bool, error) {

@@ -5,10 +5,19 @@ import (
 	"sync"
 	"testing"
 
+	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
 	"github.com/stretchr/testify/require"
 )
 
 var testContext = context.Background()
+
+func gaugeMetric(name string, value float64) models.Metrics {
+	return models.Metrics{ID: name, MType: models.Gauge, Value: &value}
+}
+
+func counterMetric(name string, value int64) models.Metrics {
+	return models.Metrics{ID: name, MType: models.Counter, Delta: &value}
+}
 
 func TestMemStorageSetGauge(t *testing.T) {
 	tests := []struct {
@@ -126,6 +135,68 @@ func TestMemStorageGetCounterNotFound(t *testing.T) {
 	_, ok, err := storage.GetCounter(testContext, "UnknownCounter")
 	require.NoError(t, err)
 	require.False(t, ok)
+}
+
+func TestMemStorageUpdateBatch(t *testing.T) {
+	storage := NewMemStorage()
+
+	err := storage.UpdateBatch(testContext, []models.Metrics{
+		gaugeMetric("temperature", 23.5),
+		counterMetric("requests", 10),
+		counterMetric("requests", 5),
+	})
+
+	require.NoError(t, err)
+	gauge, found, err := storage.GetGauge(testContext, "temperature")
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, 23.5, gauge)
+	counter, found, err := storage.GetCounter(testContext, "requests")
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, int64(15), counter)
+}
+
+func TestMemStorageUpdateBatchRejectsInvalidMetricWithoutChanges(t *testing.T) {
+	storage := NewMemStorage()
+
+	err := storage.UpdateBatch(testContext, []models.Metrics{
+		gaugeMetric("temperature", 23.5),
+		{ID: "broken", MType: "unknown"},
+	})
+
+	require.Error(t, err)
+	_, found, readErr := storage.GetGauge(testContext, "temperature")
+	require.NoError(t, readErr)
+	require.False(t, found)
+}
+
+func TestMemStorageUpdateBatchConcurrentCounters(t *testing.T) {
+	const workers = 32
+	storage := NewMemStorage()
+	errs := make(chan error, workers)
+	var wg sync.WaitGroup
+	wg.Add(workers)
+
+	for range workers {
+		go func() {
+			defer wg.Done()
+			errs <- storage.UpdateBatch(testContext, []models.Metrics{
+				counterMetric("requests", 1),
+			})
+		}()
+	}
+
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+
+	value, found, err := storage.GetCounter(testContext, "requests")
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, int64(workers), value)
 }
 
 func TestMemStorageGetAllGauges(t *testing.T) {

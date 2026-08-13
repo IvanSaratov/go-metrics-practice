@@ -8,12 +8,14 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
 	"github.com/stretchr/testify/require"
 )
 
 const (
 	setGaugeQueryPattern   = `INSERT INTO gauges \(name, value\) VALUES \(\$1, \$2\) ON CONFLICT \(name\) DO UPDATE SET value = EXCLUDED.value`
 	addCounterQueryPattern = `INSERT INTO counters \(name, value\) VALUES \(\$1, \$2\) ON CONFLICT \(name\) DO UPDATE SET value = counters.value \+ EXCLUDED.value RETURNING value`
+	addCounterBatchPattern = `INSERT INTO counters \(name, value\) VALUES \(\$1, \$2\) ON CONFLICT \(name\) DO UPDATE SET value = counters.value \+ EXCLUDED.value`
 )
 
 func newPostgresStorageMock(t *testing.T) (*PostgresStorage, sqlmock.Sqlmock) {
@@ -74,6 +76,67 @@ func TestPostgresStorageAddCounterReturnsDatabaseError(t *testing.T) {
 	_, err := storage.AddCounter(context.Background(), "requests", 5)
 
 	require.ErrorContains(t, err, "add counter")
+}
+
+func TestPostgresStorageUpdateBatchCommitsAllMetrics(t *testing.T) {
+	storage, mock := newPostgresStorageMock(t)
+	mock.ExpectBegin()
+	mock.ExpectExec(setGaugeQueryPattern).
+		WithArgs("temperature", 23.5).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(addCounterBatchPattern).
+		WithArgs("requests", int64(10)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(addCounterBatchPattern).
+		WithArgs("requests", int64(5)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	err := storage.UpdateBatch(context.Background(), []models.Metrics{
+		gaugeMetric("temperature", 23.5),
+		counterMetric("requests", 10),
+		counterMetric("requests", 5),
+	})
+
+	require.NoError(t, err)
+}
+
+func TestPostgresStorageUpdateBatchRollsBackOnMetricError(t *testing.T) {
+	storage, mock := newPostgresStorageMock(t)
+	mock.ExpectBegin()
+	mock.ExpectExec(setGaugeQueryPattern).
+		WithArgs("temperature", 23.5).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(addCounterBatchPattern).
+		WithArgs("requests", int64(10)).
+		WillReturnError(errors.New("database is unavailable"))
+	mock.ExpectRollback()
+
+	err := storage.UpdateBatch(context.Background(), []models.Metrics{
+		gaugeMetric("temperature", 23.5),
+		counterMetric("requests", 10),
+	})
+
+	require.ErrorContains(t, err, "update counter")
+}
+
+func TestPostgresStorageUpdateBatchRejectsInvalidMetricBeforeTransaction(t *testing.T) {
+	storage, _ := newPostgresStorageMock(t)
+
+	err := storage.UpdateBatch(context.Background(), []models.Metrics{
+		gaugeMetric("temperature", 23.5),
+		{ID: "broken", MType: "unknown"},
+	})
+
+	require.ErrorContains(t, err, "unsupported metric type")
+}
+
+func TestPostgresStorageUpdateBatchDoesNothingWhenEmpty(t *testing.T) {
+	storage, _ := newPostgresStorageMock(t)
+
+	err := storage.UpdateBatch(context.Background(), nil)
+
+	require.NoError(t, err)
 }
 
 func TestPostgresStorageGetGauge(t *testing.T) {

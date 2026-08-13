@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+
+	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
 )
 
 const (
@@ -19,6 +21,11 @@ const (
 		ON CONFLICT (name) DO UPDATE
 		SET value = counters.value + EXCLUDED.value
 		RETURNING value`
+	addCounterBatchQuery = `
+		INSERT INTO counters (name, value)
+		VALUES ($1, $2)
+		ON CONFLICT (name) DO UPDATE
+		SET value = counters.value + EXCLUDED.value`
 	getGaugeQuery       = `SELECT value FROM gauges WHERE name = $1`
 	getCounterQuery     = `SELECT value FROM counters WHERE name = $1`
 	getAllGaugesQuery   = `SELECT name, value FROM gauges`
@@ -48,6 +55,54 @@ func (s *PostgresStorage) AddCounter(ctx context.Context, name string, value int
 	}
 
 	return total, nil
+}
+
+func (s *PostgresStorage) UpdateBatch(ctx context.Context, metrics []models.Metrics) error {
+	// Ссылаемся на общий метод
+	if err := validateBatch(metrics); err != nil {
+		return err
+	}
+	if len(metrics) == 0 {
+		return nil
+	}
+
+	// Начинаем нашу транзакцию
+	transaction, err := s.database.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin metrics transaction: %w", err)
+	}
+
+	// Если что - возвращаем все обратно
+	rollback := func(updateErr error) error {
+		if err := transaction.Rollback(); err != nil {
+			return errors.Join(updateErr, fmt.Errorf("rollback metrics transaction: %w", err))
+		}
+		return updateErr
+	}
+
+	for _, metric := range metrics {
+		switch metric.MType {
+		case models.Gauge:
+			if _, err := transaction.ExecContext(ctx, setGaugeQuery, metric.ID, *metric.Value); err != nil {
+				return rollback(fmt.Errorf("update gauge %q: %w", metric.ID, err))
+			}
+		case models.Counter:
+			if _, err := transaction.ExecContext(
+				ctx,
+				addCounterBatchQuery,
+				metric.ID,
+				*metric.Delta,
+			); err != nil {
+				return rollback(fmt.Errorf("update counter %q: %w", metric.ID, err))
+			}
+		}
+	}
+
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("commit metrics transaction: %w", err)
+	}
+
+	return nil
 }
 
 func (s *PostgresStorage) GetGauge(ctx context.Context, name string) (float64, bool, error) {
