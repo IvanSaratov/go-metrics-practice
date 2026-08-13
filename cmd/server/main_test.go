@@ -13,12 +13,27 @@ import (
 	"testing"
 	"time"
 
+	"github.com/IvanSaratov/go-metrics-practice/internal/handler"
 	"github.com/IvanSaratov/go-metrics-practice/internal/repository"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
 )
+
+type serverPingFunc func(context.Context) error
+
+func (f serverPingFunc) PingContext(ctx context.Context) error {
+	return f(ctx)
+}
+
+func newTestHandler(storage repository.Storage, appLogger *zap.Logger) http.Handler {
+	server := handler.NewServer(
+		storage,
+		serverPingFunc(func(context.Context) error { return nil }),
+	)
+	return withMiddleware(server, appLogger)
+}
 
 func TestServerAppUsesDefaultAddress(t *testing.T) {
 	var got serverConfig
@@ -240,7 +255,7 @@ func TestServerHandlerSupportsGzip(t *testing.T) {
 	request.Header.Set("Accept-Encoding", "gzip")
 	response := httptest.NewRecorder()
 
-	newServerHandler(storage, log).ServeHTTP(response, request)
+	newTestHandler(storage, log).ServeHTTP(response, request)
 
 	require.Equal(t, http.StatusOK, response.Code)
 	require.Equal(t, "gzip", response.Header().Get("Content-Encoding"))
@@ -261,6 +276,19 @@ func TestServerHandlerSupportsGzip(t *testing.T) {
 	require.EqualValues(t, response.Body.Len(), entries[0].ContextMap()["size"])
 }
 
+func TestServerHandlerProvidesDatabasePing(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/ping", nil)
+	response := httptest.NewRecorder()
+
+	server := handler.NewServer(
+		repository.NewMemStorage(),
+		serverPingFunc(func(context.Context) error { return nil }),
+	)
+	withMiddleware(server, zap.NewNop()).ServeHTTP(response, request)
+
+	require.Equal(t, http.StatusOK, response.Code)
+}
+
 func TestServerHandlerRejectsCorruptedGzipRequest(t *testing.T) {
 	payload := []byte(`{"id":"TestGauge","type":"gauge","value":67.1}`)
 	var compressed bytes.Buffer
@@ -276,7 +304,7 @@ func TestServerHandlerRejectsCorruptedGzipRequest(t *testing.T) {
 	request.Header.Set("Content-Encoding", "gzip")
 	response := httptest.NewRecorder()
 
-	newServerHandler(repository.NewMemStorage(), zap.NewNop()).ServeHTTP(response, request)
+	newTestHandler(repository.NewMemStorage(), zap.NewNop()).ServeHTTP(response, request)
 
 	require.Equal(t, http.StatusBadRequest, response.Code)
 }
@@ -294,7 +322,7 @@ func TestServerHandlerLimitsDecompressedRequest(t *testing.T) {
 	request.Header.Set("Content-Encoding", "gzip")
 	response := httptest.NewRecorder()
 
-	newServerHandler(repository.NewMemStorage(), zap.NewNop()).ServeHTTP(response, request)
+	newTestHandler(repository.NewMemStorage(), zap.NewNop()).ServeHTTP(response, request)
 
 	require.Equal(t, http.StatusRequestEntityTooLarge, response.Code)
 }

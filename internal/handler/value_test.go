@@ -12,7 +12,7 @@ import (
 func TestValueHandlerGetGauge(t *testing.T) {
 	storage := repository.NewMemStorage()
 	storage.SetGauge("TestGauge", 67.1)
-	handler := NewRouter(storage)
+	handler := newTestServer(storage)
 
 	request := httptest.NewRequest(http.MethodGet, "/value/gauge/TestGauge", nil)
 	response := httptest.NewRecorder()
@@ -26,7 +26,7 @@ func TestValueHandlerGetGauge(t *testing.T) {
 func TestValueHandlerGetCounter(t *testing.T) {
 	storage := repository.NewMemStorage()
 	storage.AddCounter("TestCounter", 10)
-	handler := NewRouter(storage)
+	handler := newTestServer(storage)
 
 	request := httptest.NewRequest(http.MethodGet, "/value/counter/TestCounter", nil)
 	response := httptest.NewRecorder()
@@ -39,7 +39,7 @@ func TestValueHandlerGetCounter(t *testing.T) {
 
 func TestValueHandlerMetricNotFound(t *testing.T) {
 	storage := repository.NewMemStorage()
-	handler := NewRouter(storage)
+	handler := newTestServer(storage)
 
 	request := httptest.NewRequest(http.MethodGet, "/value/gauge/UnknownGauge", nil)
 	response := httptest.NewRecorder()
@@ -51,7 +51,7 @@ func TestValueHandlerMetricNotFound(t *testing.T) {
 
 func TestValueHandlerUnknownMetricType(t *testing.T) {
 	storage := repository.NewMemStorage()
-	handler := NewRouter(storage)
+	handler := newTestServer(storage)
 
 	request := httptest.NewRequest(http.MethodGet, "/value/unknown/TestMetric", nil)
 	response := httptest.NewRecorder()

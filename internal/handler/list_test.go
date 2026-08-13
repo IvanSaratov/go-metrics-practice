@@ -13,7 +13,7 @@ func TestListHandlerShowsAllMetrics(t *testing.T) {
 	storage := repository.NewMemStorage()
 	storage.SetGauge("TestGauge", 67.1)
 	storage.AddCounter("TestCounter", 10)
-	handler := NewRouter(storage)
+	handler := newTestServer(storage)
 
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
 	response := httptest.NewRecorder()
