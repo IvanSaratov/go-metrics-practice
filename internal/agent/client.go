@@ -5,9 +5,11 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
+	"net"
 	"net/http"
 	"strings"
 
@@ -76,7 +78,6 @@ func (c *Client) send(ctx context.Context, path string, payload any) error {
 		return fmt.Errorf("encode metric: %w", err)
 	}
 
-	var resp *http.Response
 	if err := c.retry(ctx, func(ctx context.Context) error {
 		req, err := http.NewRequestWithContext(
 			ctx,
@@ -92,22 +93,36 @@ func (c *Client) send(ctx context.Context, path string, payload any) error {
 		req.Header.Set("Content-Encoding", gzipEncoding)
 		req.Header.Set("Accept-Encoding", gzipEncoding)
 
-		resp, err = c.httpClient.Do(req)
+		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
 			}
-			return retryhelper.RetryableError(err)
+			return retryConnectionError(err)
 		}
+		defer resp.Body.Close()
 
-		return nil
+		return checkResponse(resp)
 	}); err != nil {
 		return fmt.Errorf("send metric: %w", err)
 	}
-	defer resp.Body.Close()
 
+	return nil
+}
+
+func retryConnectionError(err error) error {
+	var networkError *net.OpError
+	if errors.As(err, &networkError) && networkError.Op == "dial" {
+		return retryhelper.RetryableError(err)
+	}
+
+	return err
+}
+
+func checkResponse(resp *http.Response) error {
 	responseBody := io.Reader(resp.Body)
 	var gzipReader *gzip.Reader
+	var err error
 
 	switch encoding := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Encoding"))); encoding {
 	case "", identityEncoding:

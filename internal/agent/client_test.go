@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -153,7 +154,14 @@ func TestClientRetriesTransportErrors(t *testing.T) {
 	want := []models.Metrics{
 		{ID: "TestGauge", MType: models.Gauge, Value: &gaugeValue},
 	}
-	httpClient := &flakyHTTPClient{failures: 3}
+	httpClient := &flakyHTTPClient{
+		failures: 3,
+		failureErr: &net.OpError{
+			Op:  "dial",
+			Net: "tcp",
+			Err: errors.New("connection refused"),
+		},
+	}
 	client := NewClient("http://localhost", httpClient)
 	client.retry = retryWithoutDelay
 
@@ -171,6 +179,11 @@ func TestClientStopsRetryWhenContextCanceled(t *testing.T) {
 	gaugeValue := 67.1
 	httpClient := &flakyHTTPClient{
 		failures: 1,
+		failureErr: &net.OpError{
+			Op:  "dial",
+			Net: "tcp",
+			Err: errors.New("connection refused"),
+		},
 		onRequest: func() {
 			cancel()
 		},
@@ -182,6 +195,23 @@ func TestClientStopsRetryWhenContextCanceled(t *testing.T) {
 	})
 
 	require.ErrorIs(t, err, context.Canceled)
+	require.Len(t, httpClient.received, 1)
+}
+
+func TestClientDoesNotRetryOtherErrors(t *testing.T) {
+	gaugeValue := 67.1
+	httpClient := &flakyHTTPClient{
+		failures:   4,
+		failureErr: errors.New("request failed after connection"),
+	}
+	client := NewClient("http://localhost", httpClient)
+	client.retry = retryWithoutDelay
+
+	err := client.SendBatch(context.Background(), []models.Metrics{
+		{ID: "TestGauge", MType: models.Gauge, Value: &gaugeValue},
+	})
+
+	require.Error(t, err)
 	require.Len(t, httpClient.received, 1)
 }
 
@@ -298,9 +328,10 @@ func compressionDisabledClient() *http.Client {
 }
 
 type flakyHTTPClient struct {
-	failures  int
-	received  [][]models.Metrics
-	onRequest func()
+	failures   int
+	failureErr error
+	received   [][]models.Metrics
+	onRequest  func()
 }
 
 func (c *flakyHTTPClient) Do(request *http.Request) (*http.Response, error) {
@@ -315,7 +346,7 @@ func (c *flakyHTTPClient) Do(request *http.Request) (*http.Response, error) {
 	}
 
 	if len(c.received) <= c.failures {
-		return nil, errors.New("temporary connection error")
+		return nil, c.failureErr
 	}
 
 	return &http.Response{
