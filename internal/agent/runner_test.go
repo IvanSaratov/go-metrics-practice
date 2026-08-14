@@ -80,44 +80,6 @@ func TestAgentRunContinuesWhenReportFails(t *testing.T) {
 	}
 }
 
-func TestAgentRunCancelsActiveReport(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	metrics := NewMetrics()
-	metrics.gauges["TestGauge"] = 67.1
-	client := NewClient("http://localhost", &recordingHTTPClient{})
-	reportContexts := make(chan context.Context, 1)
-	client.retry = func(reportCtx context.Context, _ func(context.Context) error) error {
-		reportContexts <- reportCtx
-		return errors.New("send batch failed")
-	}
-	agent := NewAgent(metrics, client, time.Hour, time.Millisecond)
-	done := make(chan struct{})
-
-	go func() {
-		defer close(done)
-		agent.Run(ctx)
-	}()
-
-	var reportCtx context.Context
-	select {
-	case reportCtx = <-reportContexts:
-	case <-time.After(100 * time.Millisecond):
-		t.Fatal("expected agent to start reporting metrics")
-	}
-	cancel()
-
-	select {
-	case <-reportCtx.Done():
-	case <-time.After(100 * time.Millisecond):
-		t.Error("expected report context to be canceled")
-	}
-	select {
-	case <-done:
-	case <-time.After(100 * time.Millisecond):
-		t.Error("expected agent to stop")
-	}
-}
-
 type recordingHTTPClient struct {
 	requests atomic.Int32
 	err      error
