@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"strings"
 
 	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
+	retryhelper "github.com/IvanSaratov/go-metrics-practice/internal/retry"
 )
 
 // Возможно не стоило выносить как константы
@@ -27,17 +29,21 @@ type HTTPClient interface {
 type Client struct {
 	baseURL    string
 	httpClient HTTPClient
+	retry      func(context.Context, func(context.Context) error) error
 }
 
 func NewClient(baseURL string, httpClient HTTPClient) *Client {
 	return &Client{
 		baseURL:    baseURL,
 		httpClient: httpClient,
+		retry: func(ctx context.Context, operation func(context.Context) error) error {
+			return retryhelper.Do(ctx, operation)
+		},
 	}
 }
 
 func (c *Client) SendGauge(name string, value float64) error {
-	return c.sendMetric(models.Metrics{
+	return c.sendMetric(context.Background(), models.Metrics{
 		ID:    name,
 		MType: models.Gauge,
 		Value: &value,
@@ -45,46 +51,57 @@ func (c *Client) SendGauge(name string, value float64) error {
 }
 
 func (c *Client) SendCounter(name string, value int64) error {
-	return c.sendMetric(models.Metrics{
+	return c.sendMetric(context.Background(), models.Metrics{
 		ID:    name,
 		MType: models.Counter,
 		Delta: &value,
 	})
 }
 
-func (c *Client) SendBatch(metrics []models.Metrics) error {
+func (c *Client) SendBatch(ctx context.Context, metrics []models.Metrics) error {
 	if len(metrics) == 0 {
 		return nil
 	}
 
-	return c.send("/updates/", metrics)
+	return c.send(ctx, "/updates/", metrics)
 }
 
-func (c *Client) sendMetric(metric models.Metrics) error {
-	return c.send("/update", metric)
+func (c *Client) sendMetric(ctx context.Context, metric models.Metrics) error {
+	return c.send(ctx, "/update", metric)
 }
 
-func (c *Client) send(path string, payload any) error {
+func (c *Client) send(ctx context.Context, path string, payload any) error {
 	body, err := encodeGzipJSON(payload)
 	if err != nil {
 		return fmt.Errorf("encode metric: %w", err)
 	}
 
-	req, err := http.NewRequest(
-		http.MethodPost,
-		c.baseURL+path,
-		bytes.NewReader(body),
-	)
-	if err != nil {
-		return fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Content-Type", jsonContentType)
-	// Выставляем нужные заголовки
-	req.Header.Set("Content-Encoding", gzipEncoding)
-	req.Header.Set("Accept-Encoding", gzipEncoding)
+	var resp *http.Response
+	if err := c.retry(ctx, func(ctx context.Context) error {
+		req, err := http.NewRequestWithContext(
+			ctx,
+			http.MethodPost,
+			c.baseURL+path,
+			bytes.NewReader(body),
+		)
+		if err != nil {
+			return fmt.Errorf("create request: %w", err)
+		}
+		req.Header.Set("Content-Type", jsonContentType)
+		// Выставляем нужные заголовки
+		req.Header.Set("Content-Encoding", gzipEncoding)
+		req.Header.Set("Accept-Encoding", gzipEncoding)
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
+		resp, err = c.httpClient.Do(req)
+		if err != nil {
+			if resp != nil && resp.Body != nil {
+				_ = resp.Body.Close()
+			}
+			return retryhelper.RetryableError(err)
+		}
+
+		return nil
+	}); err != nil {
 		return fmt.Errorf("send metric: %w", err)
 	}
 	defer resp.Body.Close()

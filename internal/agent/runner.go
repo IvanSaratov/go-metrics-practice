@@ -37,7 +37,7 @@ func (a *Agent) Run(ctx context.Context) {
 		case <-pollTicker.C:
 			a.metrics.collectRuntimeMetrics()
 		case <-reportTicker.C:
-			if err := a.client.SendBatch(a.metrics.snapshot()); err != nil {
+			if err := a.client.SendBatch(ctx, a.metrics.snapshot()); err != nil {
 				log.WithError(err).Warn("failed to report metrics")
 			}
 		}

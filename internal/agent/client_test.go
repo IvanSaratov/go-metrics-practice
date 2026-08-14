@@ -3,15 +3,19 @@ package agent
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
+	retrylib "github.com/sethvargo/go-retry"
 	"github.com/stretchr/testify/require"
 )
 
@@ -132,7 +136,7 @@ func TestClientSendBatch(t *testing.T) {
 
 	client := NewClient(server.URL, compressionDisabledClient())
 
-	err := client.SendBatch(want)
+	err := client.SendBatch(context.Background(), want)
 
 	require.NoError(t, err)
 	require.NoError(t, decodeErr)
@@ -142,6 +146,43 @@ func TestClientSendBatch(t *testing.T) {
 	require.Equal(t, "gzip", contentEncoding)
 	require.Equal(t, "gzip", acceptEncoding)
 	require.Equal(t, want, metrics)
+}
+
+func TestClientRetriesTransportErrors(t *testing.T) {
+	gaugeValue := 67.1
+	want := []models.Metrics{
+		{ID: "TestGauge", MType: models.Gauge, Value: &gaugeValue},
+	}
+	httpClient := &flakyHTTPClient{failures: 3}
+	client := NewClient("http://localhost", httpClient)
+	client.retry = retryWithoutDelay
+
+	err := client.SendBatch(context.Background(), want)
+
+	require.NoError(t, err)
+	require.Len(t, httpClient.received, 4)
+	for _, metrics := range httpClient.received {
+		require.Equal(t, want, metrics)
+	}
+}
+
+func TestClientStopsRetryWhenContextCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	gaugeValue := 67.1
+	httpClient := &flakyHTTPClient{
+		failures: 1,
+		onRequest: func() {
+			cancel()
+		},
+	}
+	client := NewClient("http://localhost", httpClient)
+
+	err := client.SendBatch(ctx, []models.Metrics{
+		{ID: "TestGauge", MType: models.Gauge, Value: &gaugeValue},
+	})
+
+	require.ErrorIs(t, err, context.Canceled)
+	require.Len(t, httpClient.received, 1)
 }
 
 func TestClientDoesNotSendEmptyBatch(t *testing.T) {
@@ -155,7 +196,7 @@ func TestClientDoesNotSendEmptyBatch(t *testing.T) {
 
 	client := NewClient(server.URL, compressionDisabledClient())
 
-	err := client.SendBatch(nil)
+	err := client.SendBatch(context.Background(), nil)
 
 	require.NoError(t, err)
 	require.Zero(t, requests.Load())
@@ -254,4 +295,39 @@ func compressionDisabledClient() *http.Client {
 			DisableCompression: true,
 		},
 	}
+}
+
+type flakyHTTPClient struct {
+	failures  int
+	received  [][]models.Metrics
+	onRequest func()
+}
+
+func (c *flakyHTTPClient) Do(request *http.Request) (*http.Response, error) {
+	metrics, err := decodeGzipMetrics(request.Body)
+	_ = request.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+	c.received = append(c.received, metrics)
+	if c.onRequest != nil {
+		c.onRequest()
+	}
+
+	if len(c.received) <= c.failures {
+		return nil, errors.New("temporary connection error")
+	}
+
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header: http.Header{
+			"Content-Type": []string{jsonContentType},
+		},
+		Body: io.NopCloser(strings.NewReader("[]")),
+	}, nil
+}
+
+func retryWithoutDelay(ctx context.Context, operation func(context.Context) error) error {
+	backoff := retrylib.WithMaxRetries(3, retrylib.NewConstant(time.Nanosecond))
+	return retrylib.Do(ctx, backoff, retrylib.RetryFunc(operation))
 }
