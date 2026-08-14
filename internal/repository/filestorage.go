@@ -69,7 +69,7 @@ func (s *FileStorage) AddCounter(
 
 func (s *FileStorage) UpdateBatch(_ context.Context, metrics []models.Metrics) error {
 	// Общий метод валидации интерфейса
-	if err := validateBatch(metrics); err != nil {
+	if err := models.ValidateUpdates(metrics); err != nil {
 		return err
 	}
 	if len(metrics) == 0 {
@@ -165,6 +165,9 @@ func (s *FileStorage) loadSnapshot() (metricsSnapshot, error) {
 	if err := json.Unmarshal(data, &metrics); err != nil {
 		return metricsSnapshot{}, fmt.Errorf("decode metrics: %w", err)
 	}
+	if err := models.ValidateUpdates(metrics); err != nil {
+		return metricsSnapshot{}, fmt.Errorf("decode metrics: %w", err)
+	}
 
 	snapshot := metricsSnapshot{
 		gauges:   make(map[string]float64),
@@ -173,20 +176,9 @@ func (s *FileStorage) loadSnapshot() (metricsSnapshot, error) {
 	for _, metric := range metrics {
 		switch metric.MType {
 		case models.Gauge:
-			if metric.ID == "" || metric.Value == nil || metric.Delta != nil {
-				return metricsSnapshot{}, fmt.Errorf("decode metrics: invalid gauge %q", metric.ID)
-			}
 			snapshot.gauges[metric.ID] = *metric.Value
 		case models.Counter:
-			if metric.ID == "" || metric.Delta == nil || metric.Value != nil {
-				return metricsSnapshot{}, fmt.Errorf("decode metrics: invalid counter %q", metric.ID)
-			}
 			snapshot.counters[metric.ID] = *metric.Delta
-		default:
-			return metricsSnapshot{}, fmt.Errorf(
-				"decode metrics: unsupported metric type %q",
-				metric.MType,
-			)
 		}
 	}
 

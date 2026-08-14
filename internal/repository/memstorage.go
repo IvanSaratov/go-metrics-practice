@@ -44,7 +44,7 @@ func (m *MemStorage) AddCounter(_ context.Context, name string, value int64) (in
 
 func (m *MemStorage) UpdateBatch(_ context.Context, metrics []models.Metrics) error {
 	// Общеинтерфейсный метод
-	if err := validateBatch(metrics); err != nil {
+	if err := models.ValidateUpdates(metrics); err != nil {
 		return err
 	}
 	if len(metrics) == 0 {

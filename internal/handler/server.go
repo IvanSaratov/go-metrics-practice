@@ -38,6 +38,7 @@ func (s *Server) registerRoutes() {
 
 	s.router.Get("/", listHandler.ServeHTTP)
 	s.router.Post("/update", updateHandler.ServeJSON)
+	s.router.Post("/updates", updateHandler.ServeBatch)
 	s.router.Post("/update/{type}/{name}/{value}", updateHandler.ServeHTTP)
 	s.router.Post("/value", valueHandler.ServeJSON)
 	s.router.Get("/value/{type}/{name}", valueHandler.ServeHTTP)

@@ -21,6 +21,7 @@ type readErrorStorage struct {
 	counterErr     error
 	allGaugesErr   error
 	allCountersErr error
+	batchErr       error
 }
 
 func (s *readErrorStorage) SetGauge(context.Context, string, float64) error {
@@ -32,7 +33,7 @@ func (s *readErrorStorage) AddCounter(context.Context, string, int64) (int64, er
 }
 
 func (s *readErrorStorage) UpdateBatch(context.Context, []models.Metrics) error {
-	return nil
+	return s.batchErr
 }
 
 func (s *readErrorStorage) GetGauge(context.Context, string) (float64, bool, error) {
@@ -49,6 +50,21 @@ func (s *readErrorStorage) GetAllGauges(context.Context) (map[string]float64, er
 
 func (s *readErrorStorage) GetAllCounters(context.Context) (map[string]int64, error) {
 	return map[string]int64{}, s.allCountersErr
+}
+
+func TestUpdatesHandlerReturnsInternalServerErrorWhenStorageFails(t *testing.T) {
+	storage := &readErrorStorage{batchErr: errors.New("batch update failed")}
+	request := newJSONRequest(
+		t,
+		http.MethodPost,
+		"/updates/",
+		`[{"id":"temperature","type":"gauge","value":23.5}]`,
+	)
+	response := httptest.NewRecorder()
+
+	newTestServer(storage).ServeHTTP(response, request)
+
+	require.Equal(t, http.StatusInternalServerError, response.Code)
 }
 
 func TestValueHandlerReturnsInternalServerErrorWhenStorageReadFails(t *testing.T) {

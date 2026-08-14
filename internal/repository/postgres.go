@@ -59,7 +59,7 @@ func (s *PostgresStorage) AddCounter(ctx context.Context, name string, value int
 
 func (s *PostgresStorage) UpdateBatch(ctx context.Context, metrics []models.Metrics) error {
 	// Ссылаемся на общий метод
-	if err := validateBatch(metrics); err != nil {
+	if err := models.ValidateUpdates(metrics); err != nil {
 		return err
 	}
 	if len(metrics) == 0 {

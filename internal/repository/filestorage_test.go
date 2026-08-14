@@ -63,6 +63,19 @@ func TestFileStorageRestoreRejectsInvalidJSON(t *testing.T) {
 	require.ErrorContains(t, err, "decode metrics")
 }
 
+func TestFileStorageRestoreRejectsInvalidMetric(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metrics-db.json")
+	require.NoError(t, os.WriteFile(
+		path,
+		[]byte(`[{"id":"temperature","type":"gauge"}]`),
+		0o600,
+	))
+
+	err := NewFileStorage(path, false).Restore()
+
+	require.Error(t, err)
+}
+
 func TestFileStorageFailedSynchronousSaveKeepsPreviousState(t *testing.T) {
 	blockedParent := filepath.Join(t.TempDir(), "not-a-directory")
 	require.NoError(t, os.WriteFile(blockedParent, []byte("file"), 0o600))
