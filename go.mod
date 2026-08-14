@@ -7,6 +7,7 @@ require (
 	github.com/go-chi/chi/v5 v5.3.1
 	github.com/lib/pq v1.10.9
 	github.com/pressly/goose/v3 v3.27.3
+	github.com/sethvargo/go-retry v0.4.0
 	github.com/sirupsen/logrus v1.9.4
 	github.com/stretchr/testify v1.11.1
 	github.com/urfave/cli/v2 v2.27.7
@@ -19,7 +20,6 @@ require (
 	github.com/mfridman/interpolate v0.0.2 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
-	github.com/sethvargo/go-retry v0.4.0 // indirect
 	github.com/xrash/smetrics v0.0.0-20240521201337-686a1a2994c1 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
