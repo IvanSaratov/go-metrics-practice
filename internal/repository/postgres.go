@@ -7,6 +7,9 @@ import (
 	"fmt"
 
 	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
+	retryhelper "github.com/IvanSaratov/go-metrics-practice/internal/retry"
+	"github.com/jackc/pgerrcode"
+	"github.com/lib/pq"
 )
 
 const (
@@ -34,14 +37,24 @@ const (
 
 type PostgresStorage struct {
 	database *sql.DB
+	retry    func(context.Context, func(context.Context) error) error
 }
 
 func NewPostgresStorage(database *sql.DB) *PostgresStorage {
-	return &PostgresStorage{database: database}
+	return &PostgresStorage{
+		database: database,
+		retry: func(ctx context.Context, operation func(context.Context) error) error {
+			return retryhelper.Do(ctx, operation)
+		},
+	}
 }
 
 func (s *PostgresStorage) SetGauge(ctx context.Context, name string, value float64) error {
-	if _, err := s.database.ExecContext(ctx, setGaugeQuery, name, value); err != nil {
+	err := s.retry(ctx, func(ctx context.Context) error {
+		_, err := s.database.ExecContext(ctx, setGaugeQuery, name, value)
+		return retryPostgresError(err)
+	})
+	if err != nil {
 		return fmt.Errorf("set gauge %q: %w", name, err)
 	}
 
@@ -50,7 +63,11 @@ func (s *PostgresStorage) SetGauge(ctx context.Context, name string, value float
 
 func (s *PostgresStorage) AddCounter(ctx context.Context, name string, value int64) (int64, error) {
 	var total int64
-	if err := s.database.QueryRowContext(ctx, addCounterQuery, name, value).Scan(&total); err != nil {
+	err := s.retry(ctx, func(ctx context.Context) error {
+		err := s.database.QueryRowContext(ctx, addCounterQuery, name, value).Scan(&total)
+		return retryPostgresError(err)
+	})
+	if err != nil {
 		return 0, fmt.Errorf("add counter %q: %w", name, err)
 	}
 
@@ -66,6 +83,12 @@ func (s *PostgresStorage) UpdateBatch(ctx context.Context, metrics []models.Metr
 		return nil
 	}
 
+	return s.retry(ctx, func(ctx context.Context) error {
+		return retryPostgresError(s.updateBatch(ctx, metrics))
+	})
+}
+
+func (s *PostgresStorage) updateBatch(ctx context.Context, metrics []models.Metrics) error {
 	// Начинаем нашу транзакцию
 	transaction, err := s.database.BeginTx(ctx, nil)
 	if err != nil {
@@ -107,7 +130,10 @@ func (s *PostgresStorage) UpdateBatch(ctx context.Context, metrics []models.Metr
 
 func (s *PostgresStorage) GetGauge(ctx context.Context, name string) (float64, bool, error) {
 	var value float64
-	err := s.database.QueryRowContext(ctx, getGaugeQuery, name).Scan(&value)
+	err := s.retry(ctx, func(ctx context.Context) error {
+		err := s.database.QueryRowContext(ctx, getGaugeQuery, name).Scan(&value)
+		return retryPostgresError(err)
+	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil
 	}
@@ -120,7 +146,10 @@ func (s *PostgresStorage) GetGauge(ctx context.Context, name string) (float64, b
 
 func (s *PostgresStorage) GetCounter(ctx context.Context, name string) (int64, bool, error) {
 	var value int64
-	err := s.database.QueryRowContext(ctx, getCounterQuery, name).Scan(&value)
+	err := s.retry(ctx, func(ctx context.Context) error {
+		err := s.database.QueryRowContext(ctx, getCounterQuery, name).Scan(&value)
+		return retryPostgresError(err)
+	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil
 	}
@@ -132,46 +161,73 @@ func (s *PostgresStorage) GetCounter(ctx context.Context, name string) (int64, b
 }
 
 func (s *PostgresStorage) GetAllGauges(ctx context.Context) (map[string]float64, error) {
-	rows, err := s.database.QueryContext(ctx, getAllGaugesQuery)
-	if err != nil {
-		return nil, fmt.Errorf("get all gauges: %w", err)
-	}
-	defer rows.Close()
-
-	values := make(map[string]float64)
-	for rows.Next() {
-		var name string
-		var value float64
-		if err := rows.Scan(&name, &value); err != nil {
-			return nil, fmt.Errorf("scan gauge: %w", err)
+	var values map[string]float64
+	err := s.retry(ctx, func(ctx context.Context) error {
+		rows, err := s.database.QueryContext(ctx, getAllGaugesQuery)
+		if err != nil {
+			return retryPostgresError(fmt.Errorf("get all gauges: %w", err))
 		}
-		values[name] = value
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate gauges: %w", err)
+		defer rows.Close()
+
+		currentValues := make(map[string]float64)
+		for rows.Next() {
+			var name string
+			var value float64
+			if err := rows.Scan(&name, &value); err != nil {
+				return retryPostgresError(fmt.Errorf("scan gauge: %w", err))
+			}
+			currentValues[name] = value
+		}
+		if err := rows.Err(); err != nil {
+			return retryPostgresError(fmt.Errorf("iterate gauges: %w", err))
+		}
+
+		values = currentValues
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return values, nil
 }
 
-func (s *PostgresStorage) GetAllCounters(ctx context.Context) (map[string]int64, error) {
-	rows, err := s.database.QueryContext(ctx, getAllCountersQuery)
-	if err != nil {
-		return nil, fmt.Errorf("get all counters: %w", err)
+func retryPostgresError(err error) error {
+	var postgresError *pq.Error
+	if errors.As(err, &postgresError) && pgerrcode.IsConnectionException(string(postgresError.Code)) {
+		return retryhelper.RetryableError(err)
 	}
-	defer rows.Close()
 
-	values := make(map[string]int64)
-	for rows.Next() {
-		var name string
-		var value int64
-		if err := rows.Scan(&name, &value); err != nil {
-			return nil, fmt.Errorf("scan counter: %w", err)
+	return err
+}
+
+func (s *PostgresStorage) GetAllCounters(ctx context.Context) (map[string]int64, error) {
+	var values map[string]int64
+	err := s.retry(ctx, func(ctx context.Context) error {
+		rows, err := s.database.QueryContext(ctx, getAllCountersQuery)
+		if err != nil {
+			return retryPostgresError(fmt.Errorf("get all counters: %w", err))
 		}
-		values[name] = value
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate counters: %w", err)
+		defer rows.Close()
+
+		currentValues := make(map[string]int64)
+		for rows.Next() {
+			var name string
+			var value int64
+			if err := rows.Scan(&name, &value); err != nil {
+				return retryPostgresError(fmt.Errorf("scan counter: %w", err))
+			}
+			currentValues[name] = value
+		}
+		if err := rows.Err(); err != nil {
+			return retryPostgresError(fmt.Errorf("iterate counters: %w", err))
+		}
+
+		values = currentValues
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return values, nil

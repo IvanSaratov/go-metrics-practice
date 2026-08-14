@@ -6,9 +6,12 @@ import (
 	"errors"
 	"regexp"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
+	"github.com/lib/pq"
+	retrylib "github.com/sethvargo/go-retry"
 	"github.com/stretchr/testify/require"
 )
 
@@ -49,6 +52,36 @@ func TestPostgresStorageSetGaugeReturnsDatabaseError(t *testing.T) {
 	mock.ExpectExec(setGaugeQueryPattern).
 		WithArgs("temperature", 23.5).
 		WillReturnError(errors.New("database is unavailable"))
+
+	err := storage.SetGauge(context.Background(), "temperature", 23.5)
+
+	require.ErrorContains(t, err, "set gauge")
+}
+
+func TestPostgresStorageSetGaugeRetriesConnectionError(t *testing.T) {
+	storage, mock := newPostgresStorageMock(t)
+	storage.retry = retryWithoutDelay
+
+	for range 3 {
+		mock.ExpectExec(setGaugeQueryPattern).
+			WithArgs("temperature", 23.5).
+			WillReturnError(&pq.Error{Code: pq.ErrorCode("08006")})
+	}
+	mock.ExpectExec(setGaugeQueryPattern).
+		WithArgs("temperature", 23.5).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	err := storage.SetGauge(context.Background(), "temperature", 23.5)
+
+	require.NoError(t, err)
+}
+
+func TestPostgresStorageSetGaugeDoesNotRetryOtherErrors(t *testing.T) {
+	storage, mock := newPostgresStorageMock(t)
+	storage.retry = retryWithoutDelay
+	mock.ExpectExec(setGaugeQueryPattern).
+		WithArgs("temperature", 23.5).
+		WillReturnError(&pq.Error{Code: pq.ErrorCode("23505")})
 
 	err := storage.SetGauge(context.Background(), "temperature", 23.5)
 
@@ -118,6 +151,29 @@ func TestPostgresStorageUpdateBatchRollsBackOnMetricError(t *testing.T) {
 	})
 
 	require.ErrorContains(t, err, "update counter")
+}
+
+func TestPostgresStorageUpdateBatchRetriesWholeTransaction(t *testing.T) {
+	storage, mock := newPostgresStorageMock(t)
+	storage.retry = retryWithoutDelay
+
+	mock.ExpectBegin()
+	mock.ExpectExec(setGaugeQueryPattern).
+		WithArgs("temperature", 23.5).
+		WillReturnError(&pq.Error{Code: pq.ErrorCode("08006")})
+	mock.ExpectRollback()
+
+	mock.ExpectBegin()
+	mock.ExpectExec(setGaugeQueryPattern).
+		WithArgs("temperature", 23.5).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	err := storage.UpdateBatch(context.Background(), []models.Metrics{
+		gaugeMetric("temperature", 23.5),
+	})
+
+	require.NoError(t, err)
 }
 
 func TestPostgresStorageUpdateBatchRejectsInvalidMetricBeforeTransaction(t *testing.T) {
@@ -281,4 +337,9 @@ func TestPostgresStorageGetAllCountersReturnsScanError(t *testing.T) {
 	_, err := storage.GetAllCounters(context.Background())
 
 	require.ErrorContains(t, err, "scan counter")
+}
+
+func retryWithoutDelay(ctx context.Context, operation func(context.Context) error) error {
+	backoff := retrylib.WithMaxRetries(3, retrylib.NewConstant(time.Nanosecond))
+	return retrylib.Do(ctx, backoff, retrylib.RetryFunc(operation))
 }
