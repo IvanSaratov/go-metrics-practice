@@ -52,15 +52,27 @@ func (c *Client) SendCounter(name string, value int64) error {
 	})
 }
 
+func (c *Client) SendBatch(metrics []models.Metrics) error {
+	if len(metrics) == 0 {
+		return nil
+	}
+
+	return c.send("/updates/", metrics)
+}
+
 func (c *Client) sendMetric(metric models.Metrics) error {
-	body, err := encodeGzipJSON(metric)
+	return c.send("/update", metric)
+}
+
+func (c *Client) send(path string, payload any) error {
+	body, err := encodeGzipJSON(payload)
 	if err != nil {
 		return fmt.Errorf("encode metric: %w", err)
 	}
 
 	req, err := http.NewRequest(
 		http.MethodPost,
-		c.baseURL+"/update",
+		c.baseURL+path,
 		bytes.NewReader(body),
 	)
 	if err != nil {
@@ -118,11 +130,11 @@ func (c *Client) sendMetric(metric models.Metrics) error {
 }
 
 // Заменяем наш стандартный json преобразователь в отдельную функцию для кодирования
-func encodeGzipJSON(metric models.Metrics) ([]byte, error) {
+func encodeGzipJSON(value any) ([]byte, error) {
 	var body bytes.Buffer
 	writer := gzip.NewWriter(&body)
 
-	if err := json.NewEncoder(writer).Encode(metric); err != nil {
+	if err := json.NewEncoder(writer).Encode(value); err != nil {
 		_ = writer.Close()
 		return nil, err
 	}

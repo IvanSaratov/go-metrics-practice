@@ -3,13 +3,14 @@ package agent
 import (
 	"testing"
 
+	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
 	"github.com/stretchr/testify/require"
 )
 
-func TestPollRuntimeMetricsCollectsGaugeMetrics(t *testing.T) {
+func TestMetricsCollectRuntimeMetricsCollectsGauges(t *testing.T) {
 	metrics := NewMetrics()
 
-	PollRuntimeMetrics(metrics)
+	metrics.collectRuntimeMetrics()
 
 	for _, name := range runtimeGaugeNames {
 		_, ok := metrics.gauges[name]
@@ -20,55 +21,45 @@ func TestPollRuntimeMetricsCollectsGaugeMetrics(t *testing.T) {
 	require.True(t, ok)
 }
 
-func TestPollRuntimeMetricsIncrementsPollCount(t *testing.T) {
+func TestMetricsCollectRuntimeMetricsIncrementsPollCount(t *testing.T) {
 	metrics := NewMetrics()
 
-	PollRuntimeMetrics(metrics)
-	PollRuntimeMetrics(metrics)
+	metrics.collectRuntimeMetrics()
+	metrics.collectRuntimeMetrics()
 
 	require.Equal(t, int64(2), metrics.counters["PollCount"])
 }
 
-func TestReportMetricsSendsAllMetrics(t *testing.T) {
-	metrics := NewMetrics()
-	metrics.gauges["TestGauge"] = 67.1
-	metrics.counters["TestCounter"] = 10
-	sender := &fakeSender{
-		gauges:   make(map[string]float64),
-		counters: make(map[string]int64),
-	}
-
-	err := ReportMetrics(metrics.snapshot(), sender)
-
-	require.NoError(t, err)
-	require.Equal(t, 67.1, sender.gauges["TestGauge"])
-	require.Equal(t, int64(10), sender.counters["TestCounter"])
-}
-
-func TestMetricsSnapshotCopiesMetrics(t *testing.T) {
+func TestMetricsSnapshotBuildsBatch(t *testing.T) {
 	metrics := NewMetrics()
 	metrics.gauges["TestGauge"] = 67.1
 	metrics.counters["TestCounter"] = 10
 
 	snapshot := metrics.snapshot()
-	snapshot.gauges["TestGauge"] = 100.1
-	snapshot.counters["TestCounter"] = 20
+
+	gaugeValue := 67.1
+	counterDelta := int64(10)
+	require.ElementsMatch(t, []models.Metrics{
+		{ID: "TestGauge", MType: models.Gauge, Value: &gaugeValue},
+		{ID: "TestCounter", MType: models.Counter, Delta: &counterDelta},
+	}, snapshot)
+}
+
+func TestMetricsSnapshotCopiesValues(t *testing.T) {
+	metrics := NewMetrics()
+	metrics.gauges["TestGauge"] = 67.1
+	metrics.counters["TestCounter"] = 10
+
+	snapshot := metrics.snapshot()
+	for _, metric := range snapshot {
+		if metric.Value != nil {
+			*metric.Value = 100.1
+		}
+		if metric.Delta != nil {
+			*metric.Delta = 20
+		}
+	}
 
 	require.Equal(t, 67.1, metrics.gauges["TestGauge"])
 	require.Equal(t, int64(10), metrics.counters["TestCounter"])
-}
-
-type fakeSender struct {
-	gauges   map[string]float64
-	counters map[string]int64
-}
-
-func (f *fakeSender) SendGauge(name string, value float64) error {
-	f.gauges[name] = value
-	return nil
-}
-
-func (f *fakeSender) SendCounter(name string, value int64) error {
-	f.counters[name] = value
-	return nil
 }

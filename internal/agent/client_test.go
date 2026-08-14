@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
@@ -99,6 +100,67 @@ func TestClientSendCounter(t *testing.T) {
 	require.Nil(t, metric.Value)
 }
 
+func TestClientSendBatch(t *testing.T) {
+	gaugeValue := 67.1
+	counterDelta := int64(10)
+	want := []models.Metrics{
+		{ID: "TestGauge", MType: models.Gauge, Value: &gaugeValue},
+		{ID: "TestCounter", MType: models.Counter, Delta: &counterDelta},
+	}
+
+	var requestMethod string
+	var requestPath string
+	var contentType string
+	var contentEncoding string
+	var acceptEncoding string
+	var metrics []models.Metrics
+	var decodeErr error
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestMethod = r.Method
+		requestPath = r.URL.Path
+		contentType = r.Header.Get("Content-Type")
+		contentEncoding = r.Header.Get("Content-Encoding")
+		acceptEncoding = r.Header.Get("Accept-Encoding")
+		metrics, decodeErr = decodeGzipMetrics(r.Body)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(metrics)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, compressionDisabledClient())
+
+	err := client.SendBatch(want)
+
+	require.NoError(t, err)
+	require.NoError(t, decodeErr)
+	require.Equal(t, http.MethodPost, requestMethod)
+	require.Equal(t, "/updates/", requestPath)
+	require.Equal(t, "application/json", contentType)
+	require.Equal(t, "gzip", contentEncoding)
+	require.Equal(t, "gzip", acceptEncoding)
+	require.Equal(t, want, metrics)
+}
+
+func TestClientDoesNotSendEmptyBatch(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, compressionDisabledClient())
+
+	err := client.SendBatch(nil)
+
+	require.NoError(t, err)
+	require.Zero(t, requests.Load())
+}
+
 func TestClientRejectsNonJSONResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
@@ -166,6 +228,18 @@ func decodeGzipMetric(body io.Reader) (models.Metrics, error) {
 	decodeErr := json.NewDecoder(reader).Decode(&metric)
 	_, readErr := io.Copy(io.Discard, reader)
 	return metric, errors.Join(decodeErr, readErr, reader.Close())
+}
+
+func decodeGzipMetrics(body io.Reader) ([]models.Metrics, error) {
+	reader, err := gzip.NewReader(body)
+	if err != nil {
+		return nil, err
+	}
+
+	var metrics []models.Metrics
+	decodeErr := json.NewDecoder(reader).Decode(&metrics)
+	_, readErr := io.Copy(io.Discard, reader)
+	return metrics, errors.Join(decodeErr, readErr, reader.Close())
 }
 
 func writeGzipMetric(w io.Writer, metric models.Metrics) error {
