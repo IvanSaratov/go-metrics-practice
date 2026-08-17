@@ -341,5 +341,5 @@ func TestPostgresStorageGetAllCountersReturnsScanError(t *testing.T) {
 
 func retryWithoutDelay(ctx context.Context, operation func(context.Context) error) error {
 	backoff := retrylib.WithMaxRetries(3, retrylib.NewConstant(time.Nanosecond))
-	return retrylib.Do(ctx, backoff, retrylib.RetryFunc(operation))
+	return retrylib.Do(ctx, backoff, operation)
 }
