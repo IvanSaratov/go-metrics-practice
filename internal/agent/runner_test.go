@@ -3,43 +3,27 @@ package agent
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 )
 
-func TestAgentPollUpdatesMetrics(t *testing.T) {
-	metrics := NewMetrics()
-	agent := NewAgent(metrics, &fakeSender{}, time.Second, time.Second)
-
-	agent.poll()
-
-	require.Equal(t, int64(1), metrics.counters["PollCount"])
-}
-
-func TestAgentReportSendsSnapshot(t *testing.T) {
-	metrics := NewMetrics()
-	metrics.gauges["TestGauge"] = 67.1
-	metrics.counters["TestCounter"] = 10
-	sender := &fakeSender{
-		gauges:   make(map[string]float64),
-		counters: make(map[string]int64),
-	}
-	agent := NewAgent(metrics, sender, time.Second, time.Second)
-
-	err := agent.report()
-
-	require.NoError(t, err)
-	require.Equal(t, 67.1, sender.gauges["TestGauge"])
-	require.Equal(t, int64(10), sender.counters["TestCounter"])
-}
-
-func TestAgentRunStopsWhenContextCanceled(t *testing.T) {
+func TestAgentRunPollsMetrics(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	defer cancel()
 
-	agent := NewAgent(NewMetrics(), &fakeSender{}, time.Second, time.Second)
+	metrics := NewMetrics()
+	agent := NewAgent(
+		metrics,
+		NewClient("http://localhost", &recordingHTTPClient{}),
+		time.Millisecond,
+		time.Hour,
+	)
 	done := make(chan struct{})
 
 	go func() {
@@ -47,6 +31,12 @@ func TestAgentRunStopsWhenContextCanceled(t *testing.T) {
 		agent.Run(ctx)
 	}()
 
+	require.Eventually(t, func() bool {
+		metrics.mu.RLock()
+		defer metrics.mu.RUnlock()
+		return metrics.counters["PollCount"] > 0
+	}, 100*time.Millisecond, time.Millisecond)
+	cancel()
 	select {
 	case <-done:
 	case <-time.After(100 * time.Millisecond):
@@ -60,7 +50,17 @@ func TestAgentRunContinuesWhenReportFails(t *testing.T) {
 
 	metrics := NewMetrics()
 	metrics.gauges["TestGauge"] = 67.1
-	agent := NewAgent(metrics, &failingSender{}, time.Hour, time.Millisecond)
+	httpClient := &recordingHTTPClient{
+		err: errors.New("send batch failed"),
+	}
+	client := NewClient("http://localhost", httpClient)
+	client.retry = retryWithoutDelay
+	agent := NewAgent(
+		metrics,
+		client,
+		time.Hour,
+		time.Millisecond,
+	)
 	done := make(chan struct{})
 
 	go func() {
@@ -68,7 +68,9 @@ func TestAgentRunContinuesWhenReportFails(t *testing.T) {
 		agent.Run(ctx)
 	}()
 
-	time.Sleep(10 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		return httpClient.requests.Load() >= 5
+	}, time.Second, time.Millisecond)
 	cancel()
 
 	select {
@@ -78,12 +80,24 @@ func TestAgentRunContinuesWhenReportFails(t *testing.T) {
 	}
 }
 
-type failingSender struct{}
-
-func (f *failingSender) SendGauge(name string, value float64) error {
-	return errors.New("send gauge failed")
+type recordingHTTPClient struct {
+	requests atomic.Int32
+	err      error
 }
 
-func (f *failingSender) SendCounter(name string, value int64) error {
-	return errors.New("send counter failed")
+func (c *recordingHTTPClient) Do(request *http.Request) (*http.Response, error) {
+	c.requests.Add(1)
+	if c.err != nil {
+		return nil, c.err
+	}
+
+	_, _ = io.Copy(io.Discard, request.Body)
+	_ = request.Body.Close()
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header: http.Header{
+			"Content-Type": []string{jsonContentType},
+		},
+		Body: io.NopCloser(strings.NewReader("[]")),
+	}, nil
 }

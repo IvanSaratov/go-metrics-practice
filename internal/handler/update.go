@@ -43,7 +43,7 @@ func (h *UpdateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if err := h.storage.SetGauge(metricName, value); err != nil {
+		if err := h.storage.SetGauge(r.Context(), metricName, value); err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
@@ -58,7 +58,7 @@ func (h *UpdateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if _, err := h.storage.AddCounter(metricName, value); err != nil {
+		if _, err := h.storage.AddCounter(r.Context(), metricName, value); err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
@@ -76,37 +76,50 @@ func (h *UpdateHandler) ServeJSON(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, requestError.status, requestError.message)
 		return
 	}
-	if metric.ID == "" {
-		writeJSONError(w, http.StatusBadRequest, "metric id is required")
+	if err := metric.ValidateUpdate(); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	switch metric.MType {
 	case models.Gauge:
-		if metric.Value == nil || metric.Delta != nil {
-			writeJSONError(w, http.StatusBadRequest, "gauge requires value only")
-			return
-		}
-		if err := h.storage.SetGauge(metric.ID, *metric.Value); err != nil {
+		if err := h.storage.SetGauge(r.Context(), metric.ID, *metric.Value); err != nil {
 			writeJSONError(w, http.StatusInternalServerError, "failed to store metric")
 			return
 		}
 	case models.Counter:
-		if metric.Delta == nil || metric.Value != nil {
-			writeJSONError(w, http.StatusBadRequest, "counter requires delta only")
-			return
-		}
 		// В ответе возвращаем уже накопленное значение counter
-		total, err := h.storage.AddCounter(metric.ID, *metric.Delta)
+		total, err := h.storage.AddCounter(r.Context(), metric.ID, *metric.Delta)
 		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, "failed to store metric")
 			return
 		}
 		metric.Delta = &total
-	default:
-		writeJSONError(w, http.StatusBadRequest, "unsupported metric type")
-		return
 	}
 
 	writeJSON(w, http.StatusOK, metric)
+}
+
+func (h *UpdateHandler) ServeBatch(w http.ResponseWriter, r *http.Request) {
+	var metrics []models.Metrics
+	if requestError := decodeJSON(w, r, &metrics); requestError != nil {
+		writeJSONError(w, requestError.status, requestError.message)
+		return
+	}
+	if metrics == nil {
+		writeJSONError(w, http.StatusBadRequest, "metrics batch must be an array")
+		return
+	}
+
+	if err := models.ValidateUpdates(metrics); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if err := h.storage.UpdateBatch(r.Context(), metrics); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "failed to store metrics")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, metrics)
 }

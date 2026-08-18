@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -16,7 +17,7 @@ import (
 
 func TestUpdateJSONGauge(t *testing.T) {
 	storage := repository.NewMemStorage()
-	router := NewRouter(storage)
+	router := newTestServer(storage)
 	request := newJSONRequest(t, http.MethodPost, "/update", `{
 		"id": "TestGauge",
 		"type": "gauge",
@@ -29,7 +30,8 @@ func TestUpdateJSONGauge(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.Code)
 	require.Equal(t, "application/json", response.Header().Get("Content-Type"))
 
-	value, ok := storage.GetGauge("TestGauge")
+	value, ok, err := storage.GetGauge(context.Background(), "TestGauge")
+	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, 67.1, value)
 
@@ -43,8 +45,9 @@ func TestUpdateJSONGauge(t *testing.T) {
 
 func TestUpdateJSONCounterReturnsAccumulatedValue(t *testing.T) {
 	storage := repository.NewMemStorage()
-	storage.AddCounter("TestCounter", 7)
-	router := NewRouter(storage)
+	_, err := storage.AddCounter(context.Background(), "TestCounter", 7)
+	require.NoError(t, err)
+	router := newTestServer(storage)
 	request := newJSONRequest(t, http.MethodPost, "/update", `{
 		"id": "TestCounter",
 		"type": "counter",
@@ -57,7 +60,8 @@ func TestUpdateJSONCounterReturnsAccumulatedValue(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.Code)
 	require.Equal(t, "application/json", response.Header().Get("Content-Type"))
 
-	value, ok := storage.GetCounter("TestCounter")
+	value, ok, err := storage.GetCounter(context.Background(), "TestCounter")
+	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, int64(10), value)
 
@@ -71,8 +75,8 @@ func TestUpdateJSONCounterReturnsAccumulatedValue(t *testing.T) {
 
 func TestValueJSONGauge(t *testing.T) {
 	storage := repository.NewMemStorage()
-	storage.SetGauge("TestGauge", 67.1)
-	router := NewRouter(storage)
+	require.NoError(t, storage.SetGauge(context.Background(), "TestGauge", 67.1))
+	router := newTestServer(storage)
 	request := newJSONRequest(
 		t,
 		http.MethodPost,
@@ -96,8 +100,9 @@ func TestValueJSONGauge(t *testing.T) {
 
 func TestValueJSONCounter(t *testing.T) {
 	storage := repository.NewMemStorage()
-	storage.AddCounter("TestCounter", 10)
-	router := NewRouter(storage)
+	_, err := storage.AddCounter(context.Background(), "TestCounter", 10)
+	require.NoError(t, err)
+	router := newTestServer(storage)
 	request := newJSONRequest(
 		t,
 		http.MethodPost,
@@ -121,7 +126,7 @@ func TestValueJSONCounter(t *testing.T) {
 
 func TestUpdateJSONAcceptsTrailingSlash(t *testing.T) {
 	storage := repository.NewMemStorage()
-	router := NewRouter(storage)
+	router := newTestServer(storage)
 	request := newJSONRequest(
 		t,
 		http.MethodPost,
@@ -135,7 +140,8 @@ func TestUpdateJSONAcceptsTrailingSlash(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.Code)
 	require.Equal(t, "application/json", response.Header().Get("Content-Type"))
 
-	value, ok := storage.GetGauge("TestGauge")
+	value, ok, err := storage.GetGauge(context.Background(), "TestGauge")
+	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, 67.1, value)
 
@@ -149,8 +155,8 @@ func TestUpdateJSONAcceptsTrailingSlash(t *testing.T) {
 
 func TestValueJSONAcceptsTrailingSlash(t *testing.T) {
 	storage := repository.NewMemStorage()
-	storage.SetGauge("TestGauge", 67.1)
-	router := NewRouter(storage)
+	require.NoError(t, storage.SetGauge(context.Background(), "TestGauge", 67.1))
+	router := newTestServer(storage)
 	request := newJSONRequest(
 		t,
 		http.MethodPost,
@@ -252,7 +258,7 @@ func TestUpdateJSONValidatesRequest(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			storage := repository.NewMemStorage()
-			router := NewRouter(storage)
+			router := newTestServer(storage)
 			request := httptest.NewRequest(
 				http.MethodPost,
 				"/update",
@@ -274,7 +280,7 @@ func TestUpdateJSONValidatesRequest(t *testing.T) {
 }
 
 func TestValueJSONReadsGaugeStoredThroughLegacyEndpoint(t *testing.T) {
-	router := NewRouter(repository.NewMemStorage())
+	router := newTestServer(repository.NewMemStorage())
 	updateRequest := httptest.NewRequest(
 		http.MethodPost,
 		"/update/gauge/TestGauge/67.1",
@@ -322,7 +328,7 @@ func TestUpdateJSONPreservesZeroValues(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			router := NewRouter(repository.NewMemStorage())
+			router := newTestServer(repository.NewMemStorage())
 			request := newJSONRequest(t, http.MethodPost, "/update", tt.body)
 			response := httptest.NewRecorder()
 
@@ -343,7 +349,7 @@ func TestUpdateJSONPreservesZeroValues(t *testing.T) {
 }
 
 func TestUpdateJSONAcceptsContentTypeParameters(t *testing.T) {
-	router := NewRouter(repository.NewMemStorage())
+	router := newTestServer(repository.NewMemStorage())
 	request := newJSONRequest(
 		t,
 		http.MethodPost,
@@ -359,7 +365,7 @@ func TestUpdateJSONAcceptsContentTypeParameters(t *testing.T) {
 }
 
 func TestValueJSONMetricNotFound(t *testing.T) {
-	router := NewRouter(repository.NewMemStorage())
+	router := newTestServer(repository.NewMemStorage())
 	request := newJSONRequest(
 		t,
 		http.MethodPost,
@@ -375,7 +381,7 @@ func TestValueJSONMetricNotFound(t *testing.T) {
 }
 
 func TestValueJSONRejectsMetricValueInLookup(t *testing.T) {
-	router := NewRouter(repository.NewMemStorage())
+	router := newTestServer(repository.NewMemStorage())
 	request := newJSONRequest(
 		t,
 		http.MethodPost,
@@ -397,7 +403,7 @@ func TestUpdateJSONReturnsInternalErrorWhenSynchronousSaveFails(t *testing.T) {
 		filepath.Join(blockedParent, "metrics-db.json"),
 		true,
 	)
-	router := NewRouter(storage)
+	router := newTestServer(storage)
 	request := newJSONRequest(
 		t,
 		http.MethodPost,

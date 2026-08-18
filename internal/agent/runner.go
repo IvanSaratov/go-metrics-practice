@@ -9,15 +9,15 @@ import (
 
 type Agent struct {
 	metrics        *Metrics
-	sender         MetricsSender
+	client         *Client
 	pollInterval   time.Duration
 	reportInterval time.Duration
 }
 
-func NewAgent(metrics *Metrics, sender MetricsSender, pollInterval time.Duration, reportInterval time.Duration) *Agent {
+func NewAgent(metrics *Metrics, client *Client, pollInterval time.Duration, reportInterval time.Duration) *Agent {
 	return &Agent{
 		metrics:        metrics,
-		sender:         sender,
+		client:         client,
 		pollInterval:   pollInterval,
 		reportInterval: reportInterval,
 	}
@@ -35,19 +35,11 @@ func (a *Agent) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-pollTicker.C:
-			a.poll()
+			a.metrics.collectRuntimeMetrics()
 		case <-reportTicker.C:
-			if err := a.report(); err != nil {
+			if err := a.client.SendBatch(ctx, a.metrics.snapshot()); err != nil {
 				log.WithError(err).Warn("failed to report metrics")
 			}
 		}
 	}
-}
-
-func (a *Agent) poll() {
-	PollRuntimeMetrics(a.metrics)
-}
-
-func (a *Agent) report() error {
-	return ReportMetrics(a.metrics.snapshot(), a.sender)
 }

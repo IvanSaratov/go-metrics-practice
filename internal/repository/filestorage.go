@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,13 +29,11 @@ func NewFileStorage(path string, synchronous bool) *FileStorage {
 	}
 }
 
-var _ Storage = (*FileStorage)(nil)
-
-func (s *FileStorage) SetGauge(name string, value float64) error {
+func (s *FileStorage) SetGauge(ctx context.Context, name string, value float64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.synchronous {
-		return s.MemStorage.SetGauge(name, value)
+		return s.MemStorage.SetGauge(ctx, name, value)
 	}
 
 	// Публикуем новое состояние только после атомарной замены файла
@@ -47,11 +46,15 @@ func (s *FileStorage) SetGauge(name string, value float64) error {
 	return nil
 }
 
-func (s *FileStorage) AddCounter(name string, value int64) (int64, error) {
+func (s *FileStorage) AddCounter(
+	ctx context.Context,
+	name string,
+	value int64,
+) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.synchronous {
-		return s.MemStorage.AddCounter(name, value)
+		return s.MemStorage.AddCounter(ctx, name, value)
 	}
 
 	snapshot := s.MemStorage.snapshot()
@@ -62,6 +65,30 @@ func (s *FileStorage) AddCounter(name string, value int64) (int64, error) {
 	}
 	s.MemStorage.replace(snapshot)
 	return total, nil
+}
+
+func (s *FileStorage) UpdateBatch(_ context.Context, metrics []models.Metrics) error {
+	// Общий метод валидации интерфейса
+	if err := models.ValidateUpdates(metrics); err != nil {
+		return err
+	}
+	if len(metrics) == 0 {
+		return nil
+	}
+
+	// Можно все сделать одной транзакцией
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	snapshot := s.MemStorage.snapshot()
+	applyBatch(snapshot, metrics)
+	if s.synchronous {
+		if err := s.saveSnapshot(snapshot); err != nil {
+			return err
+		}
+	}
+	s.MemStorage.replace(snapshot)
+	return nil
 }
 
 func (s *FileStorage) Save() error {
@@ -138,6 +165,9 @@ func (s *FileStorage) loadSnapshot() (metricsSnapshot, error) {
 	if err := json.Unmarshal(data, &metrics); err != nil {
 		return metricsSnapshot{}, fmt.Errorf("decode metrics: %w", err)
 	}
+	if err := models.ValidateUpdates(metrics); err != nil {
+		return metricsSnapshot{}, fmt.Errorf("decode metrics: %w", err)
+	}
 
 	snapshot := metricsSnapshot{
 		gauges:   make(map[string]float64),
@@ -146,20 +176,9 @@ func (s *FileStorage) loadSnapshot() (metricsSnapshot, error) {
 	for _, metric := range metrics {
 		switch metric.MType {
 		case models.Gauge:
-			if metric.ID == "" || metric.Value == nil || metric.Delta != nil {
-				return metricsSnapshot{}, fmt.Errorf("decode metrics: invalid gauge %q", metric.ID)
-			}
 			snapshot.gauges[metric.ID] = *metric.Value
 		case models.Counter:
-			if metric.ID == "" || metric.Delta == nil || metric.Value != nil {
-				return metricsSnapshot{}, fmt.Errorf("decode metrics: invalid counter %q", metric.ID)
-			}
 			snapshot.counters[metric.ID] = *metric.Delta
-		default:
-			return metricsSnapshot{}, fmt.Errorf(
-				"decode metrics: unsupported metric type %q",
-				metric.MType,
-			)
 		}
 	}
 

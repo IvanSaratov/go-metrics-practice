@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -11,9 +12,10 @@ import (
 
 func TestListHandlerShowsAllMetrics(t *testing.T) {
 	storage := repository.NewMemStorage()
-	storage.SetGauge("TestGauge", 67.1)
-	storage.AddCounter("TestCounter", 10)
-	handler := NewRouter(storage)
+	require.NoError(t, storage.SetGauge(context.Background(), "TestGauge", 67.1))
+	_, err := storage.AddCounter(context.Background(), "TestCounter", 10)
+	require.NoError(t, err)
+	handler := newTestServer(storage)
 
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
 	response := httptest.NewRecorder()

@@ -1,0 +1,10 @@
+.git
+.github
+.idea
+.vscode
+temp
+*.out
+cmd/agent/agent
+cmd/agent/main
+cmd/server/server
+cmd/server/main

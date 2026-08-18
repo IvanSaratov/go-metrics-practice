@@ -4,22 +4,14 @@ import (
 	"math/rand"
 	"runtime"
 	"sync"
+
+	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
 )
 
 type Metrics struct {
 	mu       sync.RWMutex
 	gauges   map[string]float64
 	counters map[string]int64
-}
-
-type metricsSnapshot struct {
-	gauges   map[string]float64
-	counters map[string]int64
-}
-
-type MetricsSender interface {
-	SendGauge(name string, value float64) error
-	SendCounter(name string, value int64) error
 }
 
 var runtimeGaugeNames = []string{
@@ -59,9 +51,9 @@ func NewMetrics() *Metrics {
 	}
 }
 
-func PollRuntimeMetrics(metrics *Metrics) {
-	metrics.mu.Lock()
-	defer metrics.mu.Unlock()
+func (m *Metrics) collectRuntimeMetrics() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	var memStats runtime.MemStats
 	runtime.ReadMemStats(&memStats)
@@ -97,46 +89,36 @@ func PollRuntimeMetrics(metrics *Metrics) {
 	}
 
 	for _, name := range runtimeGaugeNames {
-		metrics.gauges[name] = runtimeGauges[name]
+		m.gauges[name] = runtimeGauges[name]
 	}
 
-	metrics.gauges["RandomValue"] = rand.Float64()
+	// требуется по заданию инкремента
+	m.gauges["RandomValue"] = rand.Float64()
 
-	metrics.counters["PollCount"]++
+	m.counters["PollCount"]++
 }
 
-func (m *Metrics) snapshot() metricsSnapshot {
+func (m *Metrics) snapshot() []models.Metrics {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	snapshot := metricsSnapshot{
-		gauges:   make(map[string]float64, len(m.gauges)),
-		counters: make(map[string]int64, len(m.counters)),
-	}
+	metrics := make([]models.Metrics, 0, len(m.gauges)+len(m.counters))
 
 	for name, value := range m.gauges {
-		snapshot.gauges[name] = value
+		metrics = append(metrics, models.Metrics{
+			ID:    name,
+			MType: models.Gauge,
+			Value: &value,
+		})
 	}
 
 	for name, value := range m.counters {
-		snapshot.counters[name] = value
+		metrics = append(metrics, models.Metrics{
+			ID:    name,
+			MType: models.Counter,
+			Delta: &value,
+		})
 	}
 
-	return snapshot
-}
-
-func ReportMetrics(snapshot metricsSnapshot, sender MetricsSender) error {
-	for name, value := range snapshot.gauges {
-		if err := sender.SendGauge(name, value); err != nil {
-			return err
-		}
-	}
-
-	for name, value := range snapshot.counters {
-		if err := sender.SendCounter(name, value); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return metrics
 }
