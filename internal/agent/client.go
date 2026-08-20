@@ -15,6 +15,7 @@ import (
 
 	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
 	retryhelper "github.com/IvanSaratov/go-metrics-practice/internal/retry"
+	"github.com/IvanSaratov/go-metrics-practice/internal/signature"
 )
 
 // Возможно не стоило выносить как константы
@@ -32,12 +33,15 @@ type Client struct {
 	baseURL    string
 	httpClient HTTPClient
 	retry      func(context.Context, func(context.Context) error) error
+	key        string
 }
 
-func NewClient(baseURL string, httpClient HTTPClient) *Client {
+// NewClient создаёт HTTP-клиент агента с необязательным ключом подписи.
+func NewClient(baseURL string, httpClient HTTPClient, key string) *Client {
 	return &Client{
 		baseURL:    baseURL,
 		httpClient: httpClient,
+		key:        key,
 		retry: func(ctx context.Context, operation func(context.Context) error) error {
 			return retryhelper.Do(ctx, operation)
 		},
@@ -92,6 +96,10 @@ func (c *Client) send(ctx context.Context, path string, payload any) error {
 		// Выставляем нужные заголовки
 		req.Header.Set("Content-Encoding", gzipEncoding)
 		req.Header.Set("Accept-Encoding", gzipEncoding)
+		if c.key != "" {
+			// Подписываем готовое gzip-тело, которое будет отправлено серверу
+			req.Header.Set(signature.HeaderName, signature.Sum(body, c.key))
+		}
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {

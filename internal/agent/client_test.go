@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -45,7 +48,7 @@ func TestClientSendGauge(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, compressionDisabledClient())
+	client := NewClient(server.URL, compressionDisabledClient(), "")
 
 	err := client.SendGauge("TestGauge", 67.1)
 
@@ -87,7 +90,7 @@ func TestClientSendCounter(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, compressionDisabledClient())
+	client := NewClient(server.URL, compressionDisabledClient(), "")
 
 	err := client.SendCounter("TestCounter", 10)
 
@@ -135,7 +138,7 @@ func TestClientSendBatch(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, compressionDisabledClient())
+	client := NewClient(server.URL, compressionDisabledClient(), "")
 
 	err := client.SendBatch(context.Background(), want)
 
@@ -147,6 +150,53 @@ func TestClientSendBatch(t *testing.T) {
 	require.Equal(t, "gzip", contentEncoding)
 	require.Equal(t, "gzip", acceptEncoding)
 	require.Equal(t, want, metrics)
+}
+
+func TestClientSignsCompressedRequestBody(t *testing.T) {
+	const key = "secret"
+
+	var (
+		requestBody []byte
+		requestHash string
+		readErr     error
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestBody, readErr = io.ReadAll(r.Body)
+		requestHash = r.Header.Get("HashSHA256")
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, compressionDisabledClient(), key)
+
+	err := client.SendGauge("TestGauge", 67.1)
+
+	require.NoError(t, err)
+	require.NoError(t, readErr)
+	hash := hmac.New(sha256.New, []byte(key))
+	_, err = hash.Write(requestBody)
+	require.NoError(t, err)
+	require.Equal(t, hex.EncodeToString(hash.Sum(nil)), requestHash)
+}
+
+func TestClientOmitsSignatureWithoutKey(t *testing.T) {
+	var requestHash string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestHash = r.Header.Get("HashSHA256")
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, compressionDisabledClient(), "")
+
+	err := client.SendGauge("TestGauge", 67.1)
+
+	require.NoError(t, err)
+	require.Empty(t, requestHash)
 }
 
 func TestClientRetriesTransportErrors(t *testing.T) {
@@ -162,7 +212,7 @@ func TestClientRetriesTransportErrors(t *testing.T) {
 			Err: errors.New("connection refused"),
 		},
 	}
-	client := NewClient("http://localhost", httpClient)
+	client := NewClient("http://localhost", httpClient, "")
 	client.retry = retryWithoutDelay
 
 	err := client.SendBatch(context.Background(), want)
@@ -188,7 +238,7 @@ func TestClientStopsRetryWhenContextCanceled(t *testing.T) {
 			cancel()
 		},
 	}
-	client := NewClient("http://localhost", httpClient)
+	client := NewClient("http://localhost", httpClient, "")
 
 	err := client.SendBatch(ctx, []models.Metrics{
 		{ID: "TestGauge", MType: models.Gauge, Value: &gaugeValue},
@@ -204,7 +254,7 @@ func TestClientDoesNotRetryOtherErrors(t *testing.T) {
 		failures:   4,
 		failureErr: errors.New("request failed after connection"),
 	}
-	client := NewClient("http://localhost", httpClient)
+	client := NewClient("http://localhost", httpClient, "")
 	client.retry = retryWithoutDelay
 
 	err := client.SendBatch(context.Background(), []models.Metrics{
@@ -224,7 +274,7 @@ func TestClientDoesNotSendEmptyBatch(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, compressionDisabledClient())
+	client := NewClient(server.URL, compressionDisabledClient(), "")
 
 	err := client.SendBatch(context.Background(), nil)
 
@@ -239,7 +289,7 @@ func TestClientRejectsNonJSONResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, server.Client())
+	client := NewClient(server.URL, server.Client(), "")
 
 	err := client.SendGauge("TestGauge", 67.1)
 
@@ -256,7 +306,7 @@ func TestClientRejectsInvalidGzipResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, compressionDisabledClient())
+	client := NewClient(server.URL, compressionDisabledClient(), "")
 
 	err := client.SendGauge("TestGauge", 67.1)
 
@@ -281,7 +331,7 @@ func TestClientRejectsCorruptedGzipResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, compressionDisabledClient())
+	client := NewClient(server.URL, compressionDisabledClient(), "")
 
 	err := client.SendGauge("TestGauge", 67.1)
 

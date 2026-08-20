@@ -20,7 +20,7 @@ func TestAgentRunPollsMetrics(t *testing.T) {
 	metrics := NewMetrics()
 	agent := NewAgent(
 		metrics,
-		NewClient("http://localhost", &recordingHTTPClient{}),
+		NewClient("http://localhost", &recordingHTTPClient{}, ""),
 		time.Millisecond,
 		time.Hour,
 	)
@@ -53,7 +53,7 @@ func TestAgentRunContinuesWhenReportFails(t *testing.T) {
 	httpClient := &recordingHTTPClient{
 		err: errors.New("send batch failed"),
 	}
-	client := NewClient("http://localhost", httpClient)
+	client := NewClient("http://localhost", httpClient, "")
 	client.retry = retryWithoutDelay
 	agent := NewAgent(
 		metrics,

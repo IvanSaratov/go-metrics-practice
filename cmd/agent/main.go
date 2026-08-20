@@ -19,6 +19,7 @@ type agentConfig struct {
 	pollInterval   time.Duration
 	reportInterval time.Duration
 	timeout        time.Duration
+	key            string
 }
 
 func main() {
@@ -60,6 +61,12 @@ func newAgentApp(run func(config agentConfig) error) *cli.App {
 			Value:   cliflags.NewDuration(30 * time.Second),
 			Usage:   "Server connection timeout",
 		},
+		&cli.StringFlag{
+			Name:    "key",
+			Aliases: []string{"k"},
+			EnvVars: []string{"KEY"},
+			Usage:   "Key for signing request bodies",
+		},
 	}
 	app.Action = func(ctx *cli.Context) error {
 		return run(agentConfig{
@@ -67,6 +74,7 @@ func newAgentApp(run func(config agentConfig) error) *cli.App {
 			pollInterval:   ctx.Generic("p").(*cliflags.Duration).Duration(),
 			reportInterval: ctx.Generic("r").(*cliflags.Duration).Duration(),
 			timeout:        ctx.Generic("t").(*cliflags.Duration).Duration(),
+			key:            ctx.String("key"),
 		})
 	}
 
@@ -80,7 +88,11 @@ func runAgent(config agentConfig) error {
 	httpClient := &http.Client{
 		Timeout: config.timeout,
 	}
-	client := agent.NewClient(cliflags.NormalizeBaseURL(config.serverAddress), httpClient)
+	client := agent.NewClient(
+		cliflags.NormalizeBaseURL(config.serverAddress),
+		httpClient,
+		config.key,
+	)
 	metrics := agent.NewMetrics()
 	metricsAgent := agent.NewAgent(metrics, client, config.pollInterval, config.reportInterval)
 
