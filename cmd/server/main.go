@@ -28,6 +28,7 @@ type serverConfig struct {
 	fileStoragePath string
 	restore         bool
 	databaseDSN     string
+	key             string
 }
 
 func main() {
@@ -100,6 +101,12 @@ func newServerApp(run func(config serverConfig) error) *cli.App {
 			EnvVars: []string{"DATABASE_DSN"},
 			Usage:   "PostgreSQL connection string",
 		},
+		&cli.StringFlag{
+			Name:    "key",
+			Aliases: []string{"k"},
+			EnvVars: []string{"KEY"},
+			Usage:   "Key for signing HTTP bodies",
+		},
 	}
 	app.Action = func(ctx *cli.Context) error {
 		storeInterval := ctx.Int64("store-interval")
@@ -113,6 +120,7 @@ func newServerApp(run func(config serverConfig) error) *cli.App {
 			fileStoragePath: ctx.String("file-storage-path"),
 			restore:         ctx.Bool("restore"),
 			databaseDSN:     ctx.String("database-dsn"),
+			key:             ctx.String("key"),
 		})
 	}
 
@@ -123,10 +131,14 @@ func newServerApp(run func(config serverConfig) error) *cli.App {
 func withMiddleware(
 	next http.Handler,
 	appLogger *zap.Logger,
+	key string,
 ) http.Handler {
-	// Логгер считает размер уже сжатого ответа
+	// Подпись проверяет исходный запрос и получает уже сжатый ответ
+	// получается middleware into middleware
 	return handlermiddleware.LoggingMiddleware(appLogger)(
-		handlermiddleware.GzipMiddleware(next),
+		handlermiddleware.SignatureMiddleware(key)(
+			handlermiddleware.GzipMiddleware(next),
+		),
 	)
 }
 
@@ -210,7 +222,7 @@ func runServer(
 
 	server := &http.Server{
 		Addr:    config.address,
-		Handler: withMiddleware(router, appLogger),
+		Handler: withMiddleware(router, appLogger, config.key),
 	}
 
 	// Буфер позволяет Serve завершиться, пока выполняется остановка сервера
