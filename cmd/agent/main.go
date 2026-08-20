@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -20,6 +21,7 @@ type agentConfig struct {
 	reportInterval time.Duration
 	timeout        time.Duration
 	key            string
+	rateLimit      int
 }
 
 func main() {
@@ -67,14 +69,28 @@ func newAgentApp(run func(config agentConfig) error) *cli.App {
 			EnvVars: []string{"KEY"},
 			Usage:   "Key for signing request bodies",
 		},
+		&cli.IntFlag{
+			Name:    "l",
+			Aliases: []string{"rate-limit"},
+			EnvVars: []string{"RATE_LIMIT"},
+			Value:   1,
+			Usage:   "Maximum number of concurrent requests",
+		},
 	}
 	app.Action = func(ctx *cli.Context) error {
+		rateLimit := ctx.Int("l")
+		// Количество будущих воркеров должно быть положительным.
+		if rateLimit <= 0 {
+			return fmt.Errorf("rate limit must be positive")
+		}
+
 		return run(agentConfig{
 			serverAddress:  ctx.String("a"),
 			pollInterval:   ctx.Generic("p").(*cliflags.Duration).Duration(),
 			reportInterval: ctx.Generic("r").(*cliflags.Duration).Duration(),
 			timeout:        ctx.Generic("t").(*cliflags.Duration).Duration(),
 			key:            ctx.String("key"),
+			rateLimit:      rateLimit,
 		})
 	}
 
