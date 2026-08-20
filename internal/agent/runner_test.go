@@ -23,6 +23,7 @@ func TestAgentRunPollsMetrics(t *testing.T) {
 		NewClient("http://localhost", &recordingHTTPClient{}, ""),
 		time.Millisecond,
 		time.Hour,
+		1,
 	)
 	done := make(chan struct{})
 
@@ -60,6 +61,7 @@ func TestAgentRunContinuesWhenReportFails(t *testing.T) {
 		client,
 		time.Hour,
 		time.Millisecond,
+		1,
 	)
 	done := make(chan struct{})
 
@@ -76,6 +78,86 @@ func TestAgentRunContinuesWhenReportFails(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(100 * time.Millisecond):
+		t.Fatal("expected agent to stop after context cancellation")
+	}
+}
+
+func TestAgentRunPollsMetricsWhileReportIsBlocked(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	metrics := NewMetrics()
+	httpClient := &blockingHTTPClient{}
+	agent := NewAgent(
+		metrics,
+		NewClient("http://localhost", httpClient, ""),
+		time.Millisecond,
+		time.Millisecond,
+		1,
+	)
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		agent.Run(ctx)
+	}()
+
+	require.Eventually(t, func() bool {
+		return httpClient.current.Load() == 1
+	}, time.Second, time.Millisecond)
+	before := pollCount(metrics)
+	require.Eventually(t, func() bool {
+		return pollCount(metrics) > before
+	}, time.Second, time.Millisecond)
+
+	cancel()
+	waitAgentStopped(t, done)
+}
+
+func TestAgentRunLimitsConcurrentReports(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	metrics := NewMetrics()
+	metrics.gauges["TestGauge"] = 67.1
+	httpClient := &blockingHTTPClient{}
+	agent := NewAgent(
+		metrics,
+		NewClient("http://localhost", httpClient, ""),
+		time.Hour,
+		time.Millisecond,
+		2,
+	)
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		agent.Run(ctx)
+	}()
+
+	require.Eventually(t, func() bool {
+		return httpClient.current.Load() == 2
+	}, time.Second, time.Millisecond)
+	time.Sleep(20 * time.Millisecond)
+	require.Equal(t, int32(2), httpClient.maximum.Load())
+	require.Equal(t, int32(2), httpClient.requests.Load())
+
+	cancel()
+	waitAgentStopped(t, done)
+}
+
+func pollCount(metrics *Metrics) int64 {
+	metrics.mu.RLock()
+	defer metrics.mu.RUnlock()
+	return metrics.counters["PollCount"]
+}
+
+func waitAgentStopped(t *testing.T, done <-chan struct{}) {
+	t.Helper()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
 		t.Fatal("expected agent to stop after context cancellation")
 	}
 }
@@ -100,4 +182,28 @@ func (c *recordingHTTPClient) Do(request *http.Request) (*http.Response, error) 
 		},
 		Body: io.NopCloser(strings.NewReader("[]")),
 	}, nil
+}
+
+type blockingHTTPClient struct {
+	requests atomic.Int32
+	current  atomic.Int32
+	maximum  atomic.Int32
+}
+
+func (c *blockingHTTPClient) Do(request *http.Request) (*http.Response, error) {
+	_, _ = io.Copy(io.Discard, request.Body)
+	_ = request.Body.Close()
+
+	c.requests.Add(1)
+	current := c.current.Add(1)
+	defer c.current.Add(-1)
+	for {
+		maximum := c.maximum.Load()
+		if current <= maximum || c.maximum.CompareAndSwap(maximum, current) {
+			break
+		}
+	}
+
+	<-request.Context().Done()
+	return nil, request.Context().Err()
 }

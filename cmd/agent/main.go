@@ -110,7 +110,13 @@ func runAgent(config agentConfig) error {
 		config.key,
 	)
 	metrics := agent.NewMetrics()
-	metricsAgent := agent.NewAgent(metrics, client, config.pollInterval, config.reportInterval)
+	metricsAgent := agent.NewAgent(
+		metrics,
+		client,
+		config.pollInterval,
+		config.reportInterval,
+		config.rateLimit,
+	)
 
 	log.Info("starting agent")
 	metricsAgent.Run(ctx)
