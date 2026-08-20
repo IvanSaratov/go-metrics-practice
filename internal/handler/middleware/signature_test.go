@@ -43,10 +43,6 @@ func TestSignatureMiddlewareRejectsInvalidRequest(t *testing.T) {
 		hash string
 	}{
 		{
-			name: "missing signature",
-			body: "request body",
-		},
-		{
 			name: "changed body",
 			body: "changed body",
 			hash: validHash,
@@ -85,6 +81,31 @@ func TestSignatureMiddlewareRejectsInvalidRequest(t *testing.T) {
 	}
 }
 
+func TestSignatureMiddlewareAllowsRequestWithoutSignature(t *testing.T) {
+	const responseHash = "58882f4e8e08ac7f68d5c1e3c2e8118664f9939315d95178161d45ae556d3034"
+
+	var receivedBody string
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		receivedBody = string(data)
+		_, _ = w.Write([]byte("response body"))
+	})
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/update",
+		bytes.NewBufferString("unsigned request"),
+	)
+	response := httptest.NewRecorder()
+
+	SignatureMiddleware("secret")(next).ServeHTTP(response, request)
+
+	require.Equal(t, http.StatusOK, response.Code)
+	require.Equal(t, "unsigned request", receivedBody)
+	require.Equal(t, "response body", response.Body.String())
+	require.Equal(t, responseHash, response.Header().Get("HashSHA256"))
+}
+
 func TestSignatureMiddlewareSignsResponseBody(t *testing.T) {
 	const (
 		requestHash  = "284ecbd7ee5e3868010384e98f2f397a4d733937d14b0a19dcff5ae95739962b"
@@ -119,6 +140,10 @@ func TestSignatureMiddlewareSignsBadRequestResponse(t *testing.T) {
 		http.MethodPost,
 		"/update",
 		bytes.NewBufferString("request body"),
+	)
+	request.Header.Set(
+		"HashSHA256",
+		"0000000000000000000000000000000000000000000000000000000000000000",
 	)
 	response := httptest.NewRecorder()
 

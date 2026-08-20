@@ -20,16 +20,20 @@ func SignatureMiddleware(key string) func(http.Handler) http.Handler {
 
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			response := newBufferedResponseWriter()
-			body, err := io.ReadAll(r.Body)
-			_ = r.Body.Close()
-			if err != nil || !signature.Verify(body, key, r.Header.Get(signature.HeaderName)) {
-				http.Error(response, "invalid request signature", http.StatusBadRequest)
-				writeSignedResponse(w, response, key)
-				return
-			}
+			// Отсутствие заголовка допустимо, проверяем только переданную подпись
+			encodedHash := r.Header.Get(signature.HeaderName)
+			if encodedHash != "" {
+				body, err := io.ReadAll(r.Body)
+				_ = r.Body.Close()
+				if err != nil || !signature.Verify(body, key, encodedHash) {
+					http.Error(response, "invalid request signature", http.StatusBadRequest)
+					writeSignedResponse(w, response, key)
+					return
+				}
 
-			// Восстанавливаем тело после проверки для следующего middleware/обработчика
-			r.Body = io.NopCloser(bytes.NewReader(body))
+				// Восстанавливаем тело после проверки для следующего middleware/обработчика
+				r.Body = io.NopCloser(bytes.NewReader(body))
+			}
 
 			next.ServeHTTP(response, r)
 			writeSignedResponse(w, response, key)

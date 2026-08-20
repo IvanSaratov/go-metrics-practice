@@ -444,6 +444,28 @@ func TestServerHandlerRejectsInvalidSignatureWithoutSavingMetric(t *testing.T) {
 	require.False(t, found)
 }
 
+func TestServerHandlerAllowsUnsignedRequestWithKey(t *testing.T) {
+	const payload = `{"id":"TestGauge","type":"gauge","value":67.1}`
+
+	storage := repository.NewMemStorage()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/update",
+		bytes.NewBufferString(payload),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+
+	newTestHandler(storage, zap.NewNop(), "secret").ServeHTTP(response, request)
+
+	require.Equal(t, http.StatusOK, response.Code)
+	value, found, err := storage.GetGauge(context.Background(), "TestGauge")
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, 67.1, value)
+	require.NotEmpty(t, response.Header().Get("HashSHA256"))
+}
+
 // hmacSHA256 вычисляет ожидаемую подпись независимо от кода приложения.
 func hmacSHA256(t *testing.T, data []byte, key string) string {
 	t.Helper()
