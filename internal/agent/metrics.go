@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"fmt"
 	"math/rand"
 	"runtime"
 	"sync"
@@ -12,6 +13,12 @@ type Metrics struct {
 	mu       sync.RWMutex
 	gauges   map[string]float64
 	counters map[string]int64
+}
+
+type systemMetrics struct {
+	totalMemory    uint64
+	freeMemory     uint64
+	cpuUtilization []float64
 }
 
 var runtimeGaugeNames = []string{
@@ -96,6 +103,18 @@ func (m *Metrics) collectRuntimeMetrics() {
 	m.gauges["RandomValue"] = rand.Float64()
 
 	m.counters["PollCount"]++
+}
+
+// сохраняет память и загрузку каждого CPU как gauge-метрики
+func (m *Metrics) updateSystemMetrics(values systemMetrics) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.gauges["TotalMemory"] = float64(values.totalMemory)
+	m.gauges["FreeMemory"] = float64(values.freeMemory)
+	for index, utilization := range values.cpuUtilization {
+		m.gauges[fmt.Sprintf("CPUutilization%d", index+1)] = utilization
+	}
 }
 
 func (m *Metrics) snapshot() []models.Metrics {

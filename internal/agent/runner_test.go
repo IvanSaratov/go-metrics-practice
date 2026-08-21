@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -25,6 +26,7 @@ func TestAgentRunPollsMetrics(t *testing.T) {
 		time.Hour,
 		1,
 	)
+	agent.systemCollector = staticSystemMetricsCollector{}
 	done := make(chan struct{})
 
 	go func() {
@@ -95,6 +97,7 @@ func TestAgentRunPollsMetricsWhileReportIsBlocked(t *testing.T) {
 		time.Millisecond,
 		1,
 	)
+	agent.systemCollector = staticSystemMetricsCollector{}
 	done := make(chan struct{})
 
 	go func() {
@@ -141,6 +144,82 @@ func TestAgentRunLimitsConcurrentReports(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	require.Equal(t, int32(2), httpClient.maximum.Load())
 	require.Equal(t, int32(2), httpClient.requests.Load())
+
+	cancel()
+	waitAgentStopped(t, done)
+}
+
+func TestAgentRunCollectsSystemMetrics(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	metrics := NewMetrics()
+	agent := NewAgent(
+		metrics,
+		NewClient("http://localhost", &recordingHTTPClient{}, ""),
+		time.Millisecond,
+		time.Hour,
+		1,
+	)
+	agent.systemCollector = staticSystemMetricsCollector{
+		values: systemMetrics{
+			totalMemory:    4096,
+			freeMemory:     1024,
+			cpuUtilization: []float64{12.5, 98.25},
+		},
+	}
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		agent.Run(ctx)
+	}()
+
+	require.Eventually(t, func() bool {
+		metrics.mu.RLock()
+		defer metrics.mu.RUnlock()
+		return metrics.gauges["TotalMemory"] == 4096 &&
+			metrics.gauges["FreeMemory"] == 1024 &&
+			metrics.gauges["CPUutilization1"] == 12.5 &&
+			metrics.gauges["CPUutilization2"] == 98.25
+	}, time.Second, time.Millisecond)
+
+	cancel()
+	waitAgentStopped(t, done)
+}
+
+func TestAgentRunPollsRuntimeWhileSystemCollectionIsBlocked(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	metrics := NewMetrics()
+	systemCollector := &blockingSystemMetricsCollector{
+		started: make(chan struct{}),
+	}
+	agent := NewAgent(
+		metrics,
+		NewClient("http://localhost", &recordingHTTPClient{}, ""),
+		time.Millisecond,
+		time.Hour,
+		1,
+	)
+	agent.systemCollector = systemCollector
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		agent.Run(ctx)
+	}()
+
+	select {
+	case <-systemCollector.started:
+	case <-time.After(time.Second):
+		t.Fatal("expected system metrics collection to start")
+	}
+	before := pollCount(metrics)
+	require.Eventually(t, func() bool {
+		return pollCount(metrics) > before
+	}, time.Second, time.Millisecond)
 
 	cancel()
 	waitAgentStopped(t, done)
@@ -206,4 +285,25 @@ func (c *blockingHTTPClient) Do(request *http.Request) (*http.Response, error) {
 
 	<-request.Context().Done()
 	return nil, request.Context().Err()
+}
+
+type staticSystemMetricsCollector struct {
+	values systemMetrics
+}
+
+func (c staticSystemMetricsCollector) collect(context.Context) (systemMetrics, error) {
+	return c.values, nil
+}
+
+type blockingSystemMetricsCollector struct {
+	started     chan struct{}
+	startedOnce sync.Once
+}
+
+func (c *blockingSystemMetricsCollector) collect(ctx context.Context) (systemMetrics, error) {
+	c.startedOnce.Do(func() {
+		close(c.started)
+	})
+	<-ctx.Done()
+	return systemMetrics{}, ctx.Err()
 }

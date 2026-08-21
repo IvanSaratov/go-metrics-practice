@@ -9,11 +9,12 @@ import (
 )
 
 type Agent struct {
-	metrics        *Metrics
-	client         *Client
-	pollInterval   time.Duration
-	reportInterval time.Duration
-	rateLimit      int
+	metrics         *Metrics
+	client          *Client
+	pollInterval    time.Duration
+	reportInterval  time.Duration
+	rateLimit       int
+	systemCollector systemMetricsCollector
 }
 
 func NewAgent(
@@ -24,11 +25,12 @@ func NewAgent(
 	rateLimit int,
 ) *Agent {
 	return &Agent{
-		metrics:        metrics,
-		client:         client,
-		pollInterval:   pollInterval,
-		reportInterval: reportInterval,
-		rateLimit:      rateLimit,
+		metrics:         metrics,
+		client:          client,
+		pollInterval:    pollInterval,
+		reportInterval:  reportInterval,
+		rateLimit:       rateLimit,
+		systemCollector: defaultSystemMetricsCollector,
 	}
 }
 
@@ -36,13 +38,16 @@ func NewAgent(
 func (a *Agent) Run(ctx context.Context) {
 	reports := make(chan struct{})
 	var workers sync.WaitGroup
-	// +2 так как rate limit устанавливаем только на отправку
-	// Один должен собирать в рантайме, другой планирует следующую очередь
-	workers.Add(a.rateLimit + 2)
+	// Лимит относится только к отправке, ещё три горутины собирают и планируют
+	workers.Add(a.rateLimit + 3)
 
 	go func() {
 		defer workers.Done()
 		a.collectRuntime(ctx)
+	}()
+	go func() {
+		defer workers.Done()
+		a.collectSystem(ctx)
 	}()
 	go func() {
 		defer workers.Done()
@@ -69,6 +74,28 @@ func (a *Agent) collectRuntime(ctx context.Context) {
 			return
 		case <-ticker.C:
 			a.metrics.collectRuntimeMetrics()
+		}
+	}
+}
+
+// периодически обновляет системные метрики
+func (a *Agent) collectSystem(ctx context.Context) {
+	ticker := time.NewTicker(a.pollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			values, err := a.systemCollector.collect(ctx)
+			if err != nil {
+				if ctx.Err() == nil {
+					log.WithError(err).Warn("failed to collect system metrics")
+				}
+				continue
+			}
+			a.metrics.updateSystemMetrics(values)
 		}
 	}
 }
