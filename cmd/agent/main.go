@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -19,6 +20,8 @@ type agentConfig struct {
 	pollInterval   time.Duration
 	reportInterval time.Duration
 	timeout        time.Duration
+	key            string
+	rateLimit      int
 }
 
 func main() {
@@ -60,13 +63,34 @@ func newAgentApp(run func(config agentConfig) error) *cli.App {
 			Value:   cliflags.NewDuration(30 * time.Second),
 			Usage:   "Server connection timeout",
 		},
+		&cli.StringFlag{
+			Name:    "key",
+			Aliases: []string{"k"},
+			EnvVars: []string{"KEY"},
+			Usage:   "Key for signing request bodies",
+		},
+		&cli.IntFlag{
+			Name:    "l",
+			Aliases: []string{"rate-limit"},
+			EnvVars: []string{"RATE_LIMIT"},
+			Value:   1,
+			Usage:   "Maximum number of concurrent requests",
+		},
 	}
 	app.Action = func(ctx *cli.Context) error {
+		rateLimit := ctx.Int("l")
+		// Количество будущих воркеров должно быть положительным.
+		if rateLimit <= 0 {
+			return fmt.Errorf("rate limit must be positive")
+		}
+
 		return run(agentConfig{
 			serverAddress:  ctx.String("a"),
 			pollInterval:   ctx.Generic("p").(*cliflags.Duration).Duration(),
 			reportInterval: ctx.Generic("r").(*cliflags.Duration).Duration(),
 			timeout:        ctx.Generic("t").(*cliflags.Duration).Duration(),
+			key:            ctx.String("key"),
+			rateLimit:      rateLimit,
 		})
 	}
 
@@ -80,9 +104,19 @@ func runAgent(config agentConfig) error {
 	httpClient := &http.Client{
 		Timeout: config.timeout,
 	}
-	client := agent.NewClient(cliflags.NormalizeBaseURL(config.serverAddress), httpClient)
+	client := agent.NewClient(
+		cliflags.NormalizeBaseURL(config.serverAddress),
+		httpClient,
+		config.key,
+	)
 	metrics := agent.NewMetrics()
-	metricsAgent := agent.NewAgent(metrics, client, config.pollInterval, config.reportInterval)
+	metricsAgent := agent.NewAgent(
+		metrics,
+		client,
+		config.pollInterval,
+		config.reportInterval,
+		config.rateLimit,
+	)
 
 	log.Info("starting agent")
 	metricsAgent.Run(ctx)

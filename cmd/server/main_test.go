@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -28,15 +31,17 @@ func (f serverPingFunc) PingContext(ctx context.Context) error {
 	return f(ctx)
 }
 
-func newTestHandler(storage repository.Storage, appLogger *zap.Logger) http.Handler {
+func newTestHandler(storage repository.Storage, appLogger *zap.Logger, key string) http.Handler {
 	server := handler.NewServer(
 		storage,
 		serverPingFunc(func(context.Context) error { return nil }),
 	)
-	return withMiddleware(server, appLogger)
+	return withMiddleware(server, appLogger, key)
 }
 
 func TestServerAppUsesDefaultAddress(t *testing.T) {
+	t.Setenv("KEY", "")
+
 	var got serverConfig
 	app := newServerApp(func(config serverConfig) error {
 		got = config
@@ -51,9 +56,12 @@ func TestServerAppUsesDefaultAddress(t *testing.T) {
 	require.Equal(t, "./temp/metrics-db.json", got.fileStoragePath)
 	require.True(t, got.restore)
 	require.Empty(t, got.databaseDSN)
+	require.Empty(t, got.key)
 }
 
 func TestServerAppParsesFlags(t *testing.T) {
+	t.Setenv("KEY", "")
+
 	var got serverConfig
 	app := newServerApp(func(config serverConfig) error {
 		got = config
@@ -67,6 +75,7 @@ func TestServerAppParsesFlags(t *testing.T) {
 		"-f", "./custom/metrics.json",
 		"-r=false",
 		"-d", "postgres://flag-user:flag-password@localhost:5432/flag-db?sslmode=disable",
+		"-k", "flag-secret",
 	})
 
 	require.NoError(t, err)
@@ -79,6 +88,7 @@ func TestServerAppParsesFlags(t *testing.T) {
 		"postgres://flag-user:flag-password@localhost:5432/flag-db?sslmode=disable",
 		got.databaseDSN,
 	)
+	require.Equal(t, "flag-secret", got.key)
 }
 
 func TestServerAppParsesEnv(t *testing.T) {
@@ -90,6 +100,7 @@ func TestServerAppParsesEnv(t *testing.T) {
 		"DATABASE_DSN",
 		"postgres://env-user:env-password@localhost:5432/env-db?sslmode=disable",
 	)
+	t.Setenv("KEY", "env-secret")
 	var got serverConfig
 	app := newServerApp(func(config serverConfig) error {
 		got = config
@@ -108,6 +119,21 @@ func TestServerAppParsesEnv(t *testing.T) {
 		"postgres://env-user:env-password@localhost:5432/env-db?sslmode=disable",
 		got.databaseDSN,
 	)
+	require.Equal(t, "env-secret", got.key)
+}
+
+func TestServerAppKeyFlagOverridesEnvironment(t *testing.T) {
+	t.Setenv("KEY", "env-secret")
+	var got serverConfig
+	app := newServerApp(func(config serverConfig) error {
+		got = config
+		return nil
+	})
+
+	err := app.Run([]string{"server", "-k", "flag-secret"})
+
+	require.NoError(t, err)
+	require.Equal(t, "flag-secret", got.key)
 }
 
 func TestServerAppDatabaseDSNFlagOverridesEnvironment(t *testing.T) {
@@ -296,6 +322,8 @@ func TestSaveMetricsPeriodicallyWritesOnTick(t *testing.T) {
 }
 
 func TestServerHandlerSupportsGzip(t *testing.T) {
+	const key = "secret"
+
 	metricID := strings.Repeat("TestGauge", 20)
 	payload := []byte(`{"id":"` + metricID + `","type":"gauge","value":67.1}`)
 	var compressed bytes.Buffer
@@ -311,12 +339,18 @@ func TestServerHandlerSupportsGzip(t *testing.T) {
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Content-Encoding", "gzip")
 	request.Header.Set("Accept-Encoding", "gzip")
+	request.Header.Set("HashSHA256", hmacSHA256(t, compressed.Bytes(), key))
 	response := httptest.NewRecorder()
 
-	newTestHandler(storage, log).ServeHTTP(response, request)
+	newTestHandler(storage, log, key).ServeHTTP(response, request)
 
 	require.Equal(t, http.StatusOK, response.Code)
 	require.Equal(t, "gzip", response.Header().Get("Content-Encoding"))
+	require.Equal(
+		t,
+		hmacSHA256(t, response.Body.Bytes(), key),
+		response.Header().Get("HashSHA256"),
+	)
 
 	reader, err := gzip.NewReader(bytes.NewReader(response.Body.Bytes()))
 	require.NoError(t, err)
@@ -343,7 +377,7 @@ func TestServerHandlerProvidesDatabasePing(t *testing.T) {
 		repository.NewMemStorage(),
 		serverPingFunc(func(context.Context) error { return nil }),
 	)
-	withMiddleware(server, zap.NewNop()).ServeHTTP(response, request)
+	withMiddleware(server, zap.NewNop(), "").ServeHTTP(response, request)
 
 	require.Equal(t, http.StatusOK, response.Code)
 }
@@ -363,7 +397,7 @@ func TestServerHandlerRejectsCorruptedGzipRequest(t *testing.T) {
 	request.Header.Set("Content-Encoding", "gzip")
 	response := httptest.NewRecorder()
 
-	newTestHandler(repository.NewMemStorage(), zap.NewNop()).ServeHTTP(response, request)
+	newTestHandler(repository.NewMemStorage(), zap.NewNop(), "").ServeHTTP(response, request)
 
 	require.Equal(t, http.StatusBadRequest, response.Code)
 }
@@ -381,9 +415,65 @@ func TestServerHandlerLimitsDecompressedRequest(t *testing.T) {
 	request.Header.Set("Content-Encoding", "gzip")
 	response := httptest.NewRecorder()
 
-	newTestHandler(repository.NewMemStorage(), zap.NewNop()).ServeHTTP(response, request)
+	newTestHandler(repository.NewMemStorage(), zap.NewNop(), "").ServeHTTP(response, request)
 
 	require.Equal(t, http.StatusRequestEntityTooLarge, response.Code)
+}
+
+func TestServerHandlerRejectsInvalidSignatureWithoutSavingMetric(t *testing.T) {
+	const payload = `{"id":"TestGauge","type":"gauge","value":67.1}`
+
+	storage := repository.NewMemStorage()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/update",
+		bytes.NewBufferString(payload),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(
+		"HashSHA256",
+		"0000000000000000000000000000000000000000000000000000000000000000",
+	)
+	response := httptest.NewRecorder()
+
+	newTestHandler(storage, zap.NewNop(), "secret").ServeHTTP(response, request)
+
+	require.Equal(t, http.StatusBadRequest, response.Code)
+	_, found, err := storage.GetGauge(context.Background(), "TestGauge")
+	require.NoError(t, err)
+	require.False(t, found)
+}
+
+func TestServerHandlerAllowsUnsignedRequestWithKey(t *testing.T) {
+	const payload = `{"id":"TestGauge","type":"gauge","value":67.1}`
+
+	storage := repository.NewMemStorage()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/update",
+		bytes.NewBufferString(payload),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+
+	newTestHandler(storage, zap.NewNop(), "secret").ServeHTTP(response, request)
+
+	require.Equal(t, http.StatusOK, response.Code)
+	value, found, err := storage.GetGauge(context.Background(), "TestGauge")
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, 67.1, value)
+	require.NotEmpty(t, response.Header().Get("HashSHA256"))
+}
+
+// hmacSHA256 вычисляет ожидаемую подпись независимо от кода приложения.
+func hmacSHA256(t *testing.T, data []byte, key string) string {
+	t.Helper()
+
+	hash := hmac.New(sha256.New, []byte(key))
+	_, err := hash.Write(data)
+	require.NoError(t, err)
+	return hex.EncodeToString(hash.Sum(nil))
 }
 
 func TestRunLogsApplicationError(t *testing.T) {

@@ -8,6 +8,9 @@ import (
 )
 
 func TestAgentAppUsesDefaults(t *testing.T) {
+	t.Setenv("KEY", "")
+	t.Setenv("RATE_LIMIT", "")
+
 	var got agentConfig
 	app := newAgentApp(func(config agentConfig) error {
 		got = config
@@ -21,6 +24,8 @@ func TestAgentAppUsesDefaults(t *testing.T) {
 	require.Equal(t, 2*time.Second, got.pollInterval)
 	require.Equal(t, 10*time.Second, got.reportInterval)
 	require.Equal(t, 30*time.Second, got.timeout)
+	require.Empty(t, got.key)
+	require.Equal(t, 1, got.rateLimit)
 }
 
 func TestAgentAppParsesFlags(t *testing.T) {
@@ -30,20 +35,26 @@ func TestAgentAppParsesFlags(t *testing.T) {
 		wantPollInterval   time.Duration
 		wantReportInterval time.Duration
 		wantTimeout        time.Duration
+		wantKey            string
+		wantRateLimit      int
 	}{
 		{
 			name:               "numeric poll interval and duration report interval",
-			args:               []string{"agent", "-a", "localhost:9090", "-p", "3", "-r", "7s", "-t", "20s"},
+			args:               []string{"agent", "-a", "localhost:9090", "-p", "3", "-r", "7s", "-t", "20s", "-k", "flag-secret", "-l", "3"},
 			wantPollInterval:   3 * time.Second,
 			wantReportInterval: 7 * time.Second,
 			wantTimeout:        20 * time.Second,
+			wantKey:            "flag-secret",
+			wantRateLimit:      3,
 		},
 		{
 			name:               "different intervals",
-			args:               []string{"agent", "-a", "localhost:9090", "-p", "1h", "-r", "2m", "-t", "5ms"},
+			args:               []string{"agent", "-a", "localhost:9090", "-p", "1h", "-r", "2m", "-t", "5ms", "--key", "long-secret", "--rate-limit", "4"},
 			wantPollInterval:   time.Hour,
 			wantReportInterval: 2 * time.Minute,
 			wantTimeout:        5 * time.Millisecond,
+			wantKey:            "long-secret",
+			wantRateLimit:      4,
 		},
 		{
 			name:               "work aliases",
@@ -51,11 +62,15 @@ func TestAgentAppParsesFlags(t *testing.T) {
 			wantPollInterval:   10 * time.Second,
 			wantReportInterval: 10 * time.Second,
 			wantTimeout:        10 * time.Second,
+			wantRateLimit:      1,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("KEY", "")
+			t.Setenv("RATE_LIMIT", "")
+
 			var got agentConfig
 			app := newAgentApp(func(config agentConfig) error {
 				got = config
@@ -69,6 +84,8 @@ func TestAgentAppParsesFlags(t *testing.T) {
 			require.Equal(t, tt.wantPollInterval, got.pollInterval)
 			require.Equal(t, tt.wantReportInterval, got.reportInterval)
 			require.Equal(t, tt.wantTimeout, got.timeout)
+			require.Equal(t, tt.wantKey, got.key)
+			require.Equal(t, tt.wantRateLimit, got.rateLimit)
 		})
 	}
 }
@@ -82,6 +99,8 @@ func TestAgentAppParsesEnvs(t *testing.T) {
 		wantPollInterval   time.Duration
 		wantReportInterval time.Duration
 		wantTimeout        time.Duration
+		wantKey            string
+		wantRateLimit      int
 	}{
 		{
 			name: "env overrides defaults",
@@ -91,25 +110,33 @@ func TestAgentAppParsesEnvs(t *testing.T) {
 				"POLL_INTERVAL":   "5s",
 				"REPORT_INTERVAL": "15s",
 				"TIMEOUT":         "20s",
+				"KEY":             "env-secret",
+				"RATE_LIMIT":      "5",
 			},
 			wantAddress:        "localhost:9090",
 			wantPollInterval:   5 * time.Second,
 			wantReportInterval: 15 * time.Second,
 			wantTimeout:        20 * time.Second,
+			wantKey:            "env-secret",
+			wantRateLimit:      5,
 		},
 		{
 			name: "flag overrides env",
-			args: []string{"agent", "-a", "localhost:7777", "-p", "3", "-r", "7s", "-t", "10s"},
+			args: []string{"agent", "-a", "localhost:7777", "-p", "3", "-r", "7s", "-t", "10s", "-k", "flag-secret", "-l", "3"},
 			env: map[string]string{
 				"ADDRESS":         "localhost:9090",
 				"POLL_INTERVAL":   "5s",
 				"REPORT_INTERVAL": "15s",
 				"TIMEOUT":         "20s",
+				"KEY":             "env-secret",
+				"RATE_LIMIT":      "5",
 			},
 			wantAddress:        "localhost:7777",
 			wantPollInterval:   3 * time.Second,
 			wantReportInterval: 7 * time.Second,
 			wantTimeout:        10 * time.Second,
+			wantKey:            "flag-secret",
+			wantRateLimit:      3,
 		},
 		{
 			name: "env bare numeric seconds",
@@ -123,11 +150,14 @@ func TestAgentAppParsesEnvs(t *testing.T) {
 			wantPollInterval:   5 * time.Second,
 			wantReportInterval: 15 * time.Second,
 			wantTimeout:        20 * time.Second,
+			wantRateLimit:      1,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("KEY", "")
+			t.Setenv("RATE_LIMIT", "")
 			for k, v := range tt.env {
 				t.Setenv(k, v)
 			}
@@ -145,6 +175,27 @@ func TestAgentAppParsesEnvs(t *testing.T) {
 			require.Equal(t, tt.wantPollInterval, got.pollInterval)
 			require.Equal(t, tt.wantReportInterval, got.reportInterval)
 			require.Equal(t, tt.wantTimeout, got.timeout)
+			require.Equal(t, tt.wantKey, got.key)
+			require.Equal(t, tt.wantRateLimit, got.rateLimit)
+		})
+	}
+}
+
+func TestAgentAppRejectsNonPositiveRateLimit(t *testing.T) {
+	t.Setenv("RATE_LIMIT", "")
+
+	for _, value := range []string{"0", "-1"} {
+		t.Run(value, func(t *testing.T) {
+			runCalled := false
+			app := newAgentApp(func(config agentConfig) error {
+				runCalled = true
+				return nil
+			})
+
+			err := app.Run([]string{"agent", "-l", value})
+
+			require.ErrorContains(t, err, "rate limit must be positive")
+			require.False(t, runCalled)
 		})
 	}
 }

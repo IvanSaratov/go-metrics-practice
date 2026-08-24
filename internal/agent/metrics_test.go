@@ -30,6 +30,22 @@ func TestMetricsCollectRuntimeMetricsIncrementsPollCount(t *testing.T) {
 	require.Equal(t, int64(2), metrics.counters["PollCount"])
 }
 
+func TestMetricsUpdateSystemMetrics(t *testing.T) {
+	metrics := NewMetrics()
+
+	metrics.updateSystemMetrics(systemMetrics{
+		totalMemory:    4096,
+		freeMemory:     1024,
+		cpuUtilization: []float64{12.5, 98.25},
+	})
+
+	require.Equal(t, float64(4096), metrics.gauges["TotalMemory"])
+	require.Equal(t, float64(1024), metrics.gauges["FreeMemory"])
+	require.Equal(t, 12.5, metrics.gauges["CPUutilization1"])
+	require.Equal(t, 98.25, metrics.gauges["CPUutilization2"])
+	require.NotContains(t, metrics.gauges, "CPUutilization0")
+}
+
 func TestMetricsSnapshotBuildsBatch(t *testing.T) {
 	metrics := NewMetrics()
 	metrics.gauges["TestGauge"] = 67.1
