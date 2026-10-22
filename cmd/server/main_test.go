@@ -41,6 +41,8 @@ func newTestHandler(storage repository.Storage, appLogger *zap.Logger, key strin
 
 func TestServerAppUsesDefaultAddress(t *testing.T) {
 	t.Setenv("KEY", "")
+	t.Setenv("AUDIT_FILE", "")
+	t.Setenv("AUDIT_URL", "")
 
 	var got serverConfig
 	app := newServerApp(func(config serverConfig) error {
@@ -57,6 +59,8 @@ func TestServerAppUsesDefaultAddress(t *testing.T) {
 	require.True(t, got.restore)
 	require.Empty(t, got.databaseDSN)
 	require.Empty(t, got.key)
+	require.Empty(t, got.auditFile)
+	require.Empty(t, got.auditURL)
 }
 
 func TestServerAppParsesFlags(t *testing.T) {
@@ -76,6 +80,8 @@ func TestServerAppParsesFlags(t *testing.T) {
 		"-r=false",
 		"-d", "postgres://flag-user:flag-password@localhost:5432/flag-db?sslmode=disable",
 		"-k", "flag-secret",
+		"--audit-file", "./logs/audit.jsonl",
+		"--audit-url", "http://localhost:9090/audit",
 	})
 
 	require.NoError(t, err)
@@ -89,6 +95,8 @@ func TestServerAppParsesFlags(t *testing.T) {
 		got.databaseDSN,
 	)
 	require.Equal(t, "flag-secret", got.key)
+	require.Equal(t, "./logs/audit.jsonl", got.auditFile)
+	require.Equal(t, "http://localhost:9090/audit", got.auditURL)
 }
 
 func TestServerAppParsesEnv(t *testing.T) {
@@ -101,6 +109,8 @@ func TestServerAppParsesEnv(t *testing.T) {
 		"postgres://env-user:env-password@localhost:5432/env-db?sslmode=disable",
 	)
 	t.Setenv("KEY", "env-secret")
+	t.Setenv("AUDIT_FILE", "./env/audit.jsonl")
+	t.Setenv("AUDIT_URL", "https://example.com/env-audit")
 	var got serverConfig
 	app := newServerApp(func(config serverConfig) error {
 		got = config
@@ -120,6 +130,82 @@ func TestServerAppParsesEnv(t *testing.T) {
 		got.databaseDSN,
 	)
 	require.Equal(t, "env-secret", got.key)
+	require.Equal(t, "./env/audit.jsonl", got.auditFile)
+	require.Equal(t, "https://example.com/env-audit", got.auditURL)
+}
+
+// Проверяем независимость приёмников и явное переопределение настроек.
+func TestServerAppAuditConfiguration(t *testing.T) {
+	tests := []struct {
+		name     string
+		args     []string
+		envFile  string
+		envURL   string
+		wantFile string
+		wantURL  string
+	}{
+		{
+			name:     "file flag only",
+			args:     []string{"--audit-file", "./logs/audit.jsonl"},
+			wantFile: "./logs/audit.jsonl",
+		},
+		{
+			name:    "URL flag only",
+			args:    []string{"--audit-url", "http://localhost:9090/audit"},
+			wantURL: "http://localhost:9090/audit",
+		},
+		{
+			name:     "file environment only",
+			envFile:  "./env/audit.jsonl",
+			wantFile: "./env/audit.jsonl",
+		},
+		{
+			name:    "URL environment only",
+			envURL:  "https://example.com/env-audit",
+			wantURL: "https://example.com/env-audit",
+		},
+		{
+			name:     "flags override environment",
+			args:     []string{"--audit-file", "./logs/audit.jsonl", "--audit-url", "http://localhost:9090/audit"},
+			envFile:  "./env/audit.jsonl",
+			envURL:   "https://example.com/env-audit",
+			wantFile: "./logs/audit.jsonl",
+			wantURL:  "http://localhost:9090/audit",
+		},
+		{
+			name:    "empty file flag overrides environment",
+			args:    []string{"--audit-file="},
+			envFile: "./env/audit.jsonl",
+			envURL:  "https://example.com/env-audit",
+			wantURL: "https://example.com/env-audit",
+		},
+		{
+			name:     "empty URL flag overrides environment",
+			args:     []string{"--audit-url="},
+			envFile:  "./env/audit.jsonl",
+			envURL:   "https://example.com/env-audit",
+			wantFile: "./env/audit.jsonl",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("AUDIT_FILE", tt.envFile)
+			t.Setenv("AUDIT_URL", tt.envURL)
+
+			var got serverConfig
+			app := newServerApp(func(config serverConfig) error {
+				got = config
+				return nil
+			})
+
+			err := app.Run(append([]string{"server"}, tt.args...))
+
+			require.NoError(t, err)
+			require.Equal(t, tt.wantFile, got.auditFile)
+			require.Equal(t, tt.wantURL, got.auditURL)
+		})
+	}
 }
 
 func TestServerAppKeyFlagOverridesEnvironment(t *testing.T) {

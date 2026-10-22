@@ -29,6 +29,8 @@ type serverConfig struct {
 	restore         bool
 	databaseDSN     string
 	key             string
+	auditFile       string
+	auditURL        string
 }
 
 func main() {
@@ -63,6 +65,7 @@ func run(args []string, appLogger *zap.Logger) int {
 	return 0
 }
 
+// newServerApp собирает параметры запуска и передаёт настройки серверу.
 func newServerApp(run func(config serverConfig) error) *cli.App {
 	app := cli.NewApp()
 	app.Name = "server"
@@ -107,6 +110,16 @@ func newServerApp(run func(config serverConfig) error) *cli.App {
 			EnvVars: []string{"KEY"},
 			Usage:   "Key for signing HTTP bodies",
 		},
+		&cli.StringFlag{
+			Name:    "audit-file",
+			EnvVars: []string{"AUDIT_FILE"},
+			Usage:   "Audit log file path",
+		},
+		&cli.StringFlag{
+			Name:    "audit-url",
+			EnvVars: []string{"AUDIT_URL"},
+			Usage:   "Audit log receiver URL",
+		},
 	}
 	app.Action = func(ctx *cli.Context) error {
 		storeInterval := ctx.Int64("store-interval")
@@ -121,6 +134,8 @@ func newServerApp(run func(config serverConfig) error) *cli.App {
 			restore:         ctx.Bool("restore"),
 			databaseDSN:     ctx.String("database-dsn"),
 			key:             ctx.String("key"),
+			auditFile:       ctx.String("audit-file"),
+			auditURL:        ctx.String("audit-url"),
 		})
 	}
 
