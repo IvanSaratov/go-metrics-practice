@@ -12,7 +12,9 @@ import (
 	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
 )
 
-// Хранит актуальные метрики в памяти и сохраняет их снимки в JSON
+// FileStorage хранит метрики в памяти и сохраняет их в JSON-файл.
+// В синхронном режиме при ошибке записи данные в памяти не меняются.
+// Контекст в методах не используется.
 type FileStorage struct {
 	*MemStorage
 
@@ -21,6 +23,9 @@ type FileStorage struct {
 	synchronous bool
 }
 
+// NewFileStorage создаёт хранилище для файла path.
+// При synchronous=true каждое обновление сохраняется в файл, иначе нужен вызов Save.
+// Чтобы загрузить метрики из файла, вызовите Restore.
 func NewFileStorage(path string, synchronous bool) *FileStorage {
 	return &FileStorage{
 		MemStorage:  NewMemStorage(),
@@ -29,6 +34,7 @@ func NewFileStorage(path string, synchronous bool) *FileStorage {
 	}
 }
 
+// SetGauge записывает новое значение gauge.
 func (s *FileStorage) SetGauge(ctx context.Context, name string, value float64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -46,6 +52,7 @@ func (s *FileStorage) SetGauge(ctx context.Context, name string, value float64) 
 	return nil
 }
 
+// AddCounter прибавляет value к счётчику и возвращает новое значение.
 func (s *FileStorage) AddCounter(
 	ctx context.Context,
 	name string,
@@ -67,6 +74,8 @@ func (s *FileStorage) AddCounter(
 	return total, nil
 }
 
+// UpdateBatch проверяет пакет и обновляет метрики.
+// В синхронном режиме файл сохраняется один раз для всего пакета.
 func (s *FileStorage) UpdateBatch(_ context.Context, metrics []models.Metrics) error {
 	// Общий метод валидации интерфейса
 	if err := models.ValidateUpdates(metrics); err != nil {
@@ -91,6 +100,8 @@ func (s *FileStorage) UpdateBatch(_ context.Context, metrics []models.Metrics) e
 	return nil
 }
 
+// Save сохраняет метрики в JSON-файл.
+// Старый файл заменяется после успешной записи нового.
 func (s *FileStorage) Save() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -98,6 +109,8 @@ func (s *FileStorage) Save() error {
 	return s.saveSnapshot(s.MemStorage.snapshot())
 }
 
+// Restore загружает метрики из файла в память.
+// Если файла нет, ничего не делает.
 func (s *FileStorage) Restore() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -12,6 +12,8 @@ type metricsSnapshot struct {
 	counters map[string]int64
 }
 
+// MemStorage хранит метрики в памяти. Можно использовать из нескольких горутин.
+// Контекст в методах не используется.
 type MemStorage struct {
 	// Один мьютекс сохраняет согласованность обеих коллекций метрик
 	mu       sync.RWMutex
@@ -19,6 +21,7 @@ type MemStorage struct {
 	counters map[string]int64
 }
 
+// NewMemStorage создаёт пустое хранилище метрик в памяти.
 func NewMemStorage() *MemStorage {
 	return &MemStorage{
 		gauges:   make(map[string]float64),
@@ -26,6 +29,7 @@ func NewMemStorage() *MemStorage {
 	}
 }
 
+// SetGauge записывает новое значение gauge.
 func (m *MemStorage) SetGauge(_ context.Context, name string, value float64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -34,6 +38,7 @@ func (m *MemStorage) SetGauge(_ context.Context, name string, value float64) err
 	return nil
 }
 
+// AddCounter прибавляет value к счётчику и возвращает новое значение.
 func (m *MemStorage) AddCounter(_ context.Context, name string, value int64) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -42,6 +47,8 @@ func (m *MemStorage) AddCounter(_ context.Context, name string, value int64) (in
 	return m.counters[name], nil
 }
 
+// UpdateBatch проверяет пакет и обновляет все метрики под одной блокировкой.
+// Если в пакете есть ошибка, данные не меняются.
 func (m *MemStorage) UpdateBatch(_ context.Context, metrics []models.Metrics) error {
 	// Общеинтерфейсный метод
 	if err := models.ValidateUpdates(metrics); err != nil {
@@ -63,6 +70,7 @@ func (m *MemStorage) UpdateBatch(_ context.Context, metrics []models.Metrics) er
 	return nil
 }
 
+// GetGauge возвращает значение gauge и сообщает, найдена ли метрика.
 func (m *MemStorage) GetGauge(_ context.Context, name string) (float64, bool, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -71,6 +79,7 @@ func (m *MemStorage) GetGauge(_ context.Context, name string) (float64, bool, er
 	return value, ok, nil
 }
 
+// GetCounter возвращает значение counter и сообщает, найден ли счётчик.
 func (m *MemStorage) GetCounter(_ context.Context, name string) (int64, bool, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -79,6 +88,7 @@ func (m *MemStorage) GetCounter(_ context.Context, name string) (int64, bool, er
 	return value, ok, nil
 }
 
+// GetAllGauges возвращает копию map с gauge-метриками.
 func (m *MemStorage) GetAllGauges(_ context.Context) (map[string]float64, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -86,6 +96,7 @@ func (m *MemStorage) GetAllGauges(_ context.Context) (map[string]float64, error)
 	return cloneMap(m.gauges), nil
 }
 
+// GetAllCounters возвращает копию map со счётчиками.
 func (m *MemStorage) GetAllCounters(_ context.Context) (map[string]int64, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
