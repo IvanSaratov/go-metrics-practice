@@ -1,3 +1,4 @@
+// Package handler содержит HTTP-обработчики для работы с метриками.
 package handler
 
 import (
@@ -8,6 +9,7 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 )
 
+// Server направляет HTTP-запросы к обработчикам метрик и проверки базы.
 type Server struct {
 	router      *chi.Mux
 	storage     repository.Storage
@@ -15,7 +17,9 @@ type Server struct {
 	notifyAudit AuditNotifier
 }
 
-// Подключает обработчики метрик и необязательный аудит запросов.
+// NewServer создаёт сервер и подключает маршруты.
+// Если db равен nil, запрос /ping возвращает 500.
+// Если notifyAudit равен nil, аудит отключён.
 func NewServer(storage repository.Storage, db Database, notifyAudit AuditNotifier) *Server {
 	server := &Server{
 		router:      chi.NewRouter(),
@@ -27,6 +31,7 @@ func NewServer(storage repository.Storage, db Database, notifyAudit AuditNotifie
 	return server
 }
 
+// ServeHTTP передаёт запрос обработчику по его методу и пути.
 func (s *Server) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	s.router.ServeHTTP(writer, request)
 }

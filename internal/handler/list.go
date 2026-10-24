@@ -8,6 +8,7 @@ import (
 	"github.com/IvanSaratov/go-metrics-practice/internal/repository"
 )
 
+// ListHandler показывает все метрики на HTML-странице.
 type ListHandler struct {
 	storage repository.Storage
 }
@@ -45,12 +46,15 @@ var listTemplate = template.Must(template.New("metrics").Parse(`<!doctype html>
 </body>
 </html>`))
 
+// NewListHandler создаёт обработчик списка метрик из storage.
 func NewListHandler(storage repository.Storage) *ListHandler {
 	return &ListHandler{
 		storage: storage,
 	}
 }
 
+// ServeHTTP возвращает HTML-страницу с метриками по GET /.
+// Gauge и counter выведены отдельно, в каждой группе метрики отсортированы по имени.
 func (h *ListHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	gauges, err := h.storage.GetAllGauges(r.Context())
 	if err != nil {

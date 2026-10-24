@@ -14,15 +14,17 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// Уведомляет об успешно сохранённых метриках, не меняя результат обновления.
+// AuditNotifier получает событие аудита после успешного сохранения метрик.
 type AuditNotifier func(context.Context, audit.Event)
 
+// UpdateHandler обрабатывает запросы на обновление метрик.
 type UpdateHandler struct {
 	storage     repository.Storage
 	notifyAudit AuditNotifier
 }
 
-// Создаёт обработчик с необязательным уведомлением об аудите.
+// NewUpdateHandler создаёт обработчик обновления метрик.
+// Если notifyAudit равен nil, аудит отключён.
 func NewUpdateHandler(storage repository.Storage, notifyAudit AuditNotifier) *UpdateHandler {
 	return &UpdateHandler{
 		storage:     storage,
@@ -30,7 +32,8 @@ func NewUpdateHandler(storage repository.Storage, notifyAudit AuditNotifier) *Up
 	}
 }
 
-// Сохраняет метрику, переданную в адресе запроса.
+// ServeHTTP сохраняет метрику из адреса POST /update/{type}/{name}/{value}.
+// Значение gauge заменяется, а counter — прибавляется к текущему.
 func (h *UpdateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -82,7 +85,8 @@ func (h *UpdateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusBadRequest)
 }
 
-// ServeJSON сохраняет одну метрику, переданную в JSON
+// ServeJSON сохраняет метрику из JSON в запросе POST /update.
+// В ответе возвращает метрику с новым значением, для counter — накопленную сумму.
 func (h *UpdateHandler) ServeJSON(w http.ResponseWriter, r *http.Request) {
 	var metric models.Metrics
 	if requestError := decodeJSON(w, r, &metric); requestError != nil {
@@ -114,7 +118,8 @@ func (h *UpdateHandler) ServeJSON(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, metric)
 }
 
-// Сохраняет пакет метрик и формирует одно событие аудита на запрос.
+// ServeBatch сохраняет JSON-массив метрик из запроса POST /updates.
+// В ответе возвращает принятый пакет. Пустой массив допустим.
 func (h *UpdateHandler) ServeBatch(w http.ResponseWriter, r *http.Request) {
 	var metrics []models.Metrics
 	if requestError := decodeJSON(w, r, &metrics); requestError != nil {
