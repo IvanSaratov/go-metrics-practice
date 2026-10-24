@@ -210,11 +210,23 @@ func runServer(
 		return err
 	}
 
+	notifyAudit, auditCloser, err := newAudit(config, appLogger, openAuditFile, newAuditHTTPClient())
+	if err != nil {
+		return err
+	}
+	if auditCloser != nil {
+		defer func() {
+			if err := auditCloser.Close(); err != nil {
+				appLogger.Error("failed to close audit file", zap.Error(err))
+			}
+		}()
+	}
+
 	var handlerDatabase handler.Database
 	if database != nil {
 		handlerDatabase = database
 	}
-	router := handler.NewServer(storage, handlerDatabase)
+	router := handler.NewServer(storage, handlerDatabase, notifyAudit)
 	listener, err := net.Listen("tcp", config.address)
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", config.address, err)

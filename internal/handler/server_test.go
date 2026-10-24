@@ -16,5 +16,6 @@ func newTestServer(storage repository.Storage) *Server {
 	return NewServer(
 		storage,
 		pingFunc(func(context.Context) error { return nil }),
+		nil,
 	)
 }

@@ -1,25 +1,36 @@
 package handler
 
 import (
+	"context"
 	"math"
+	"net"
 	"net/http"
 	"strconv"
+	"time"
 
+	"github.com/IvanSaratov/go-metrics-practice/internal/audit"
 	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
 	"github.com/IvanSaratov/go-metrics-practice/internal/repository"
 	"github.com/go-chi/chi/v5"
 )
 
+// Уведомляет об успешно сохранённых метриках, не меняя результат обновления.
+type AuditNotifier func(context.Context, audit.Event)
+
 type UpdateHandler struct {
-	storage repository.Storage
+	storage     repository.Storage
+	notifyAudit AuditNotifier
 }
 
-func NewUpdateHandler(storage repository.Storage) *UpdateHandler {
+// Создаёт обработчик с необязательным уведомлением об аудите.
+func NewUpdateHandler(storage repository.Storage, notifyAudit AuditNotifier) *UpdateHandler {
 	return &UpdateHandler{
-		storage: storage,
+		storage:     storage,
+		notifyAudit: notifyAudit,
 	}
 }
 
+// Сохраняет метрику, переданную в адресе запроса.
 func (h *UpdateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -47,6 +58,7 @@ func (h *UpdateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
+		h.auditRequest(r, metricName)
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -62,6 +74,7 @@ func (h *UpdateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
+		h.auditRequest(r, metricName)
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -97,9 +110,11 @@ func (h *UpdateHandler) ServeJSON(w http.ResponseWriter, r *http.Request) {
 		metric.Delta = &total
 	}
 
+	h.auditRequest(r, metric.ID)
 	writeJSON(w, http.StatusOK, metric)
 }
 
+// Сохраняет пакет метрик и формирует одно событие аудита на запрос.
 func (h *UpdateHandler) ServeBatch(w http.ResponseWriter, r *http.Request) {
 	var metrics []models.Metrics
 	if requestError := decodeJSON(w, r, &metrics); requestError != nil {
@@ -121,5 +136,26 @@ func (h *UpdateHandler) ServeBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	names := make([]string, len(metrics))
+	for index, metric := range metrics {
+		names[index] = metric.ID
+	}
+	h.auditRequest(r, names...)
 	writeJSON(w, http.StatusOK, metrics)
+}
+
+// Передаёт в аудит только имена сохранённых метрик и IP соединения без порта.
+func (h *UpdateHandler) auditRequest(r *http.Request, names ...string) {
+	if h.notifyAudit == nil || len(names) == 0 {
+		return
+	}
+	address := r.RemoteAddr
+	if host, _, err := net.SplitHostPort(address); err == nil {
+		address = host
+	}
+	h.notifyAudit(r.Context(), audit.Event{
+		Timestamp: time.Now().Unix(),
+		Metrics:   names,
+		IPAddress: address,
+	})
 }

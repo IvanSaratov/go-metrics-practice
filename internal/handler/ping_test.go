@@ -15,6 +15,7 @@ func TestPingHandlerReturnsOKWhenDatabaseIsAvailable(t *testing.T) {
 	server := NewServer(
 		repository.NewMemStorage(),
 		pingFunc(func(context.Context) error { return nil }),
+		nil,
 	)
 	request := httptest.NewRequest(http.MethodGet, "/ping", nil)
 	response := httptest.NewRecorder()
@@ -28,6 +29,7 @@ func TestPingHandlerReturnsInternalServerErrorWhenDatabaseIsUnavailable(t *testi
 	server := NewServer(
 		repository.NewMemStorage(),
 		pingFunc(func(context.Context) error { return errors.New("database unavailable") }),
+		nil,
 	)
 	request := httptest.NewRequest(http.MethodGet, "/ping", nil)
 	response := httptest.NewRecorder()
@@ -38,7 +40,7 @@ func TestPingHandlerReturnsInternalServerErrorWhenDatabaseIsUnavailable(t *testi
 }
 
 func TestPingHandlerReturnsInternalServerErrorWithoutDatabase(t *testing.T) {
-	server := NewServer(repository.NewMemStorage(), nil)
+	server := NewServer(repository.NewMemStorage(), nil, nil)
 	request := httptest.NewRequest(http.MethodGet, "/ping", nil)
 	response := httptest.NewRecorder()
 

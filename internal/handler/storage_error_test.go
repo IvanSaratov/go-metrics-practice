@@ -22,17 +22,21 @@ type readErrorStorage struct {
 	allGaugesErr   error
 	allCountersErr error
 	batchErr       error
+	writeErr       error
 }
 
 func (s *readErrorStorage) SetGauge(context.Context, string, float64) error {
-	return nil
+	return s.writeErr
 }
 
 func (s *readErrorStorage) AddCounter(context.Context, string, int64) (int64, error) {
-	return 0, nil
+	return 0, s.writeErr
 }
 
 func (s *readErrorStorage) UpdateBatch(context.Context, []models.Metrics) error {
+	if s.writeErr != nil {
+		return s.writeErr
+	}
 	return s.batchErr
 }
 
