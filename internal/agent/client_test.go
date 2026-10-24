@@ -9,7 +9,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -337,6 +339,64 @@ func TestClientRejectsCorruptedGzipResponse(t *testing.T) {
 
 	require.Error(t, err)
 	require.ErrorContains(t, err, "read response body")
+}
+
+func TestEncodeGzipJSON(t *testing.T) {
+	value := 67.1
+	delta := int64(10)
+	metrics := []models.Metrics{
+		{ID: "TestGauge", MType: models.Gauge, Value: &value},
+		{ID: "TestCounter", MType: models.Counter, Delta: &delta},
+	}
+
+	t.Run("Repeated", func(t *testing.T) {
+		bodies := make([][]byte, len(metrics))
+		for i, metric := range metrics {
+			body, err := encodeGzipJSON(metric)
+			require.NoError(t, err)
+			bodies[i] = body
+		}
+
+		// Распаковываем после всех вызовов, чтобы заметить перезапись предыдущего результата.
+		for i, body := range bodies {
+			got, err := decodeGzipMetric(bytes.NewReader(body))
+			require.NoError(t, err)
+			require.Equal(t, metrics[i], got)
+		}
+	})
+
+	t.Run("AfterError", func(t *testing.T) {
+		body, err := encodeGzipJSON(math.NaN())
+		require.Error(t, err)
+		require.Nil(t, body)
+
+		body, err = encodeGzipJSON(metrics[0])
+		require.NoError(t, err)
+		got, err := decodeGzipMetric(bytes.NewReader(body))
+		require.NoError(t, err)
+		require.Equal(t, metrics[0], got)
+	})
+
+	t.Run("Parallel", func(t *testing.T) {
+		for i := range 8 {
+			t.Run(fmt.Sprintf("worker_%d", i), func(t *testing.T) {
+				t.Parallel()
+				for j := range 10 {
+					delta := int64(i*10 + j)
+					want := models.Metrics{
+						ID:    fmt.Sprintf("counter_%d", i),
+						MType: models.Counter,
+						Delta: &delta,
+					}
+					body, err := encodeGzipJSON(want)
+					require.NoError(t, err)
+					got, err := decodeGzipMetric(bytes.NewReader(body))
+					require.NoError(t, err)
+					require.Equal(t, want, got)
+				}
+			})
+		}
+	})
 }
 
 func decodeGzipMetric(body io.Reader) (models.Metrics, error) {
