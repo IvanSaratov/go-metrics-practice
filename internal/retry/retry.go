@@ -1,3 +1,4 @@
+// Package retry повторяет операции при временных ошибках.
 package retry
 
 import (
@@ -9,12 +10,16 @@ import (
 
 const maxRetries = 3
 
-// Do выполняет операцию с тремя повторами через 1, 3 и 5 секунд.
+// Do выполняет операцию и при временной ошибке повторяет её до трёх раз.
+// Паузы между попытками — 1, 3 и 5 секунд.
+// Для повтора ошибка должна быть помечена через RetryableError.
+// Отмена ctx прерывает ожидание следующей попытки.
 func Do(ctx context.Context, operation retrylib.RetryFunc) error {
 	return retrylib.Do(ctx, newBackoff(), operation)
 }
 
-// RetryableError помечает ошибку как временную.
+// RetryableError помечает ошибку для повторной попытки в Do.
+// Для nil возвращает nil.
 func RetryableError(err error) error {
 	return retrylib.RetryableError(err)
 }

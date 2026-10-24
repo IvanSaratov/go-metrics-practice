@@ -9,6 +9,7 @@ import (
 	"github.com/pressly/goose/v3"
 )
 
+// Migrate применяет ещё не выполненные миграции из migrations.Files.
 func Migrate(ctx context.Context, database *sql.DB) error {
 	provider, err := goose.NewProvider(goose.DialectPostgres, database, migrations.Files)
 	if err != nil {

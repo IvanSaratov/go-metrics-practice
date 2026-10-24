@@ -1,3 +1,4 @@
+// Package logger настраивает логгер для обычного режима и отладки.
 package logger
 
 import (
@@ -7,7 +8,8 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-// Фабрика с двумя педнастроенными конфиуграциями
+// New создаёт логгер с выводом в stdout.
+// При debug=true выводит цветной текст с уровня debug, иначе — JSON с уровня info.
 func New(debug bool) (*zap.Logger, error) {
 	if debug {
 		return newDebugConfig().Build()

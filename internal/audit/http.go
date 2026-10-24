@@ -13,18 +13,21 @@ import (
 
 const httpAuditTimeout = 5 * time.Second
 
-// Отправляет HTTP-запросы к удалённому приёмнику аудита.
+// HTTPClient выполняет HTTP-запросы аудита. Подходит стандартный *http.Client.
 type HTTPClient interface {
+	// Do отправляет запрос и возвращает ответ сервера.
+	// Тело ответа закрывает вызывающий код.
 	Do(*http.Request) (*http.Response, error)
 }
 
-// Передаёт события аудита удалённому серверу.
+// HTTPObserver отправляет события аудита на HTTP-сервер.
 type HTTPObserver struct {
 	url    string
 	client HTTPClient
 }
 
-// Проверяет адрес и создаёт HTTP-приёмник с заданным клиентом.
+// NewHTTPObserver проверяет адрес и создаёт приёмник аудита.
+// В destination нужен полный адрес с http:// или https:// и именем хоста.
 func NewHTTPObserver(destination string, client HTTPClient) (*HTTPObserver, error) {
 	parsed, err := url.Parse(destination)
 	if err != nil {
@@ -37,7 +40,8 @@ func NewHTTPObserver(destination string, client HTTPClient) (*HTTPObserver, erro
 	return &HTTPObserver{url: destination, client: client}, nil
 }
 
-// Отправляет событие как JSON и ограничивает время запроса.
+// Update отправляет событие JSON-запросом POST с таймаутом 5 секунд.
+// Успешными считает только ответы 2xx.
 func (o *HTTPObserver) Update(ctx context.Context, event Event) error {
 	ctx, cancel := context.WithTimeout(ctx, httpAuditTimeout)
 	defer cancel()

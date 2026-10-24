@@ -8,18 +8,21 @@ import (
 	"sync"
 )
 
-// Записывает события аудита в открытый файл.
+// FileObserver записывает события аудита в файл.
+// Можно использовать из нескольких горутин.
 type FileObserver struct {
 	mu   sync.Mutex
 	file io.WriteCloser
 }
 
-// Принимает открытый для дописывания файл и отвечает за его закрытие.
+// NewFileObserver создаёт приёмник для открытого файла.
+// Файл должен быть открыт для дописывания. Его закрывает FileObserver.Close.
 func NewFileObserver(file io.WriteCloser) *FileObserver {
 	return &FileObserver{file: file}
 }
 
-// Добавляет событие одной JSON-строкой, сохраняя предыдущие записи.
+// Update записывает событие одной строкой JSON.
+// Контекст не используется.
 func (o *FileObserver) Update(_ context.Context, event Event) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -30,7 +33,7 @@ func (o *FileObserver) Update(_ context.Context, event Event) error {
 	return nil
 }
 
-// Ожидает текущую запись и закрывает файл.
+// Close ждёт завершения текущей записи и закрывает файл.
 func (o *FileObserver) Close() error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
