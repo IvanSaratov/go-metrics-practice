@@ -15,7 +15,6 @@ import (
 
 	"github.com/IvanSaratov/go-metrics-practice/internal/config/db"
 	"github.com/IvanSaratov/go-metrics-practice/internal/handler"
-	handlermiddleware "github.com/IvanSaratov/go-metrics-practice/internal/handler/middleware"
 	applogger "github.com/IvanSaratov/go-metrics-practice/internal/logger"
 	"github.com/IvanSaratov/go-metrics-practice/internal/repository"
 	"go.uber.org/zap"
@@ -51,21 +50,6 @@ func run(args []string, appLogger *zap.Logger) int {
 	}
 
 	return 0
-}
-
-// Выносим объявление всех middleware в отдельную функцию для определения последовательности.
-func withMiddleware(
-	next http.Handler,
-	appLogger *zap.Logger,
-	key string,
-) http.Handler {
-	// Подпись проверяет исходный запрос и получает уже сжатый ответ
-	// получается middleware into middleware
-	return handlermiddleware.LoggingMiddleware(appLogger)(
-		handlermiddleware.SignatureMiddleware(key)(
-			handlermiddleware.GzipMiddleware(next),
-		),
-	)
 }
 
 func newStorage(config serverConfig, database *sql.DB) (repository.Storage, error) {

@@ -18,7 +18,7 @@ type serverConfig struct {
 	auditURL        string
 }
 
-// newServerApp собирает параметры запуска и передаёт настройки серверу.
+// Собирает параметры запуска и передаёт настройки серверу.
 func newServerApp(run func(config serverConfig) error) *cli.App {
 	app := cli.NewApp()
 	app.Name = "server"
