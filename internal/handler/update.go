@@ -144,7 +144,7 @@ func (h *UpdateHandler) ServeBatch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, metrics)
 }
 
-// Передаёт в аудит только имена сохранённых метрик и IP соединения без порта.
+// Передаёт в аудит только имена сохранённых метрик
 func (h *UpdateHandler) auditRequest(r *http.Request, names ...string) {
 	if h.notifyAudit == nil || len(names) == 0 {
 		return

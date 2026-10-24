@@ -247,10 +247,18 @@ func runServer(
 		}()
 	}
 
+	requests := &drainingHandler{next: withMiddleware(router, appLogger, config.key)}
 	server := &http.Server{
 		Addr:    config.address,
-		Handler: withMiddleware(router, appLogger, config.key),
+		Handler: requests,
 	}
+	defer func() {
+		// При таймауте Shutdown закрываем соединения, затем ждём обработчики.
+		if err := server.Close(); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("close HTTP server: %w", err))
+		}
+		requests.wait()
+	}()
 
 	// Буфер позволяет Serve завершиться, пока выполняется остановка сервера
 	serveErrors := make(chan error, 1)
