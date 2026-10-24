@@ -52,29 +52,6 @@ func run(args []string, appLogger *zap.Logger) int {
 	return 0
 }
 
-func newStorage(config serverConfig, database *sql.DB) (repository.Storage, error) {
-	// Если не пустой dsn то возвращаем postgres
-	if database != nil {
-		return repository.NewPostgresStorage(database), nil
-	}
-
-	// Если пустой путь для файла - то хранилище в памяти
-	path := strings.TrimSpace(config.fileStoragePath)
-	if path == "" {
-		return repository.NewMemStorage(), nil
-	}
-
-	// Иначе создаем харнилище в файле внутри дефолтной директории
-	storage := repository.NewFileStorage(path, config.storeInterval == 0)
-	if config.restore {
-		if err := storage.Restore(); err != nil {
-			return nil, fmt.Errorf("restore metrics: %w", err)
-		}
-	}
-
-	return storage, nil
-}
-
 func runServer(
 	ctx context.Context,
 	config serverConfig,

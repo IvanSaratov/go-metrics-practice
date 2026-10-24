@@ -11,7 +11,7 @@ type metricsSaver interface {
 	Save() error
 }
 
-// Вынесены отдельные функции переодической записи в файл в отдельный пакет - что бы не захламлять main
+// Сохраняет метрики по расписанию; ошибка записи не останавливает цикл.
 func saveMetricsPeriodically(
 	ctx context.Context,
 	ticks <-chan time.Time,
