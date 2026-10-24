@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 
 	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
 	retryhelper "github.com/IvanSaratov/go-metrics-practice/internal/retry"
@@ -24,6 +25,12 @@ const (
 	gzipEncoding     = "gzip"
 	identityEncoding = "identity"
 )
+
+var gzipWriterPool = sync.Pool{
+	New: func() any {
+		return gzip.NewWriter(io.Discard)
+	},
+}
 
 type HTTPClient interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -166,10 +173,15 @@ func checkResponse(resp *http.Response) error {
 	return nil
 }
 
-// Заменяем наш стандартный json преобразователь в отдельную функцию для кодирования
 func encodeGzipJSON(value any) ([]byte, error) {
 	var body bytes.Buffer
-	writer := gzip.NewWriter(&body)
+	writer := gzipWriterPool.Get().(*gzip.Writer)
+	writer.Reset(&body)
+	defer func() {
+		// Отсоединяем буфер, чтобы пул не удерживал тело запроса.
+		writer.Reset(io.Discard)
+		gzipWriterPool.Put(writer)
+	}()
 
 	if err := json.NewEncoder(writer).Encode(value); err != nil {
 		_ = writer.Close()
