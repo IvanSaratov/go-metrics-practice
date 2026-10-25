@@ -2,17 +2,24 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/IvanSaratov/go-metrics-practice/internal/audit"
 	"github.com/IvanSaratov/go-metrics-practice/internal/handler"
 	"go.uber.org/zap"
 )
 
-// Создаёт приёмники аудита и уведомление с логированием ошибок доставки.
+const (
+	auditQueueSize       = 64
+	auditShutdownTimeout = 5 * time.Second
+)
+
+// Создаёт отдельную очередь и фоновый обработчик для каждого приёмника.
 func newAudit(
 	config serverConfig,
 	appLogger *zap.Logger,
@@ -29,18 +36,23 @@ func newAudit(
 	}
 
 	var observers []audit.Observer
-	var closer io.Closer
+	var closer auditCloser
+	addObserver := func(name string, observer audit.Observer) {
+		async := audit.NewAsyncObserver(observer, auditQueueSize, func(err error) {
+			appLogger.Error("failed to deliver audit events", zap.String("observer", name), zap.Error(err))
+		})
+		observers = append(observers, async)
+		closer = append(closer, async)
+	}
 	if config.auditFile != "" {
 		file, err := openFile(config.auditFile)
 		if err != nil {
 			return nil, nil, fmt.Errorf("open audit file: %w", err)
 		}
-		fileObserver := audit.NewFileObserver(file)
-		observers = append(observers, fileObserver)
-		closer = fileObserver
+		addObserver("file", audit.NewFileObserver(file))
 	}
 	if httpObserver != nil {
-		observers = append(observers, httpObserver)
+		addObserver("http", httpObserver)
 	}
 	if len(observers) == 0 {
 		return nil, nil, nil
@@ -48,10 +60,23 @@ func newAudit(
 
 	publisher := audit.NewPublisher(observers...)
 	return func(ctx context.Context, event audit.Event) {
-		if err := publisher.Notify(ctx, event); err != nil {
-			appLogger.Error("failed to audit request", zap.Error(err))
-		}
+		_ = publisher.Notify(ctx, event)
 	}, closer, nil
+}
+
+type auditCloser []*audit.AsyncObserver
+
+func (observers auditCloser) Close() error {
+	// Все очереди обрабатываются параллельно и делят один таймаут остановки.
+	ctx, cancel := context.WithTimeout(context.Background(), auditShutdownTimeout)
+	defer cancel()
+	var errs []error
+	for _, observer := range observers {
+		if err := observer.Shutdown(ctx); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // Открывает журнал для дописывания, сохраняя существующие записи.

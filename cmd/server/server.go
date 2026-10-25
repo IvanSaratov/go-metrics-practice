@@ -53,7 +53,7 @@ func runServer(
 	if auditCloser != nil {
 		defer func() {
 			if err := auditCloser.Close(); err != nil {
-				appLogger.Error("failed to close audit file", zap.Error(err))
+				appLogger.Error("failed to stop audit", zap.Error(err))
 			}
 		}()
 	}
