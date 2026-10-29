@@ -9,16 +9,19 @@ import (
 )
 
 type Server struct {
-	router  *chi.Mux
-	storage repository.Storage
-	db      Database
+	router      *chi.Mux
+	storage     repository.Storage
+	db          Database
+	notifyAudit AuditNotifier
 }
 
-func NewServer(storage repository.Storage, db Database) *Server {
+// Подключает обработчики метрик и необязательный аудит запросов.
+func NewServer(storage repository.Storage, db Database, notifyAudit AuditNotifier) *Server {
 	server := &Server{
-		router:  chi.NewRouter(),
-		storage: storage,
-		db:      db,
+		router:      chi.NewRouter(),
+		storage:     storage,
+		db:          db,
+		notifyAudit: notifyAudit,
 	}
 	server.registerRoutes()
 	return server
@@ -32,7 +35,7 @@ func (s *Server) registerRoutes() {
 	// Одинаково обрабатываем пути с завершающим слешем и без него.
 	s.router.Use(chimiddleware.StripSlashes)
 
-	updateHandler := NewUpdateHandler(s.storage)
+	updateHandler := NewUpdateHandler(s.storage, s.notifyAudit)
 	valueHandler := NewValueHandler(s.storage)
 	listHandler := NewListHandler(s.storage)
 
