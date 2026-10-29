@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"testing/iotest"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -95,11 +98,12 @@ func TestHTTPObserverUpdateChecksStatus(t *testing.T) {
 		{name: "last success code", status: 299},
 		{name: "redirect", status: http.StatusMultipleChoices, wantError: true},
 		{name: "bad request", status: http.StatusBadRequest, wantError: true},
-		{name: "server error", status: http.StatusInternalServerError, wantError: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			body := &auditResponseBody{Reader: strings.NewReader("")}
+			attempts := 0
 			client := auditHTTPClientFunc(func(req *http.Request) (*http.Response, error) {
+				attempts++
 				return &http.Response{StatusCode: tt.status, Body: body}, nil
 			})
 			observer, err := NewHTTPObserver("http://localhost:9090/audit", client)
@@ -113,29 +117,151 @@ func TestHTTPObserverUpdateChecksStatus(t *testing.T) {
 				require.NoError(t, err)
 			}
 			require.True(t, body.closed)
+			require.Equal(t, 1, attempts)
 		})
 	}
 }
 
-// Сохраняем сетевые ошибки и таймаут для последующего логирования сервером.
+func TestHTTPObserverUpdateRetriesTemporaryFailures(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		err     error
+		status  int
+		readErr error
+	}{
+		{name: "connection error", err: &net.OpError{Op: "dial", Err: errors.New("connection refused")}},
+		{name: "connection closed", err: &url.Error{Op: "Post", Err: io.EOF}},
+		{name: "internal server error", status: http.StatusInternalServerError},
+		{name: "unavailable", status: http.StatusServiceUnavailable},
+		{name: "truncated server response", status: http.StatusServiceUnavailable, readErr: io.ErrUnexpectedEOF},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				event := Event{Timestamp: 123, Metrics: []string{"Alloc"}, IPAddress: "192.168.0.42"}
+				started := time.Now()
+				var attempts []time.Duration
+				var responseBody *auditResponseBody
+				client := auditHTTPClientFunc(func(req *http.Request) (*http.Response, error) {
+					defer req.Body.Close()
+					if responseBody != nil {
+						require.True(t, responseBody.closed, "предыдущий ответ должен быть закрыт до повтора")
+					}
+					var received Event
+					require.NoError(t, json.NewDecoder(req.Body).Decode(&received))
+					require.Equal(t, event, received)
+					require.Equal(t, http.MethodPost, req.Method)
+					require.Equal(t, "application/json", req.Header.Get("Content-Type"))
+					attempts = append(attempts, time.Since(started))
+					status := http.StatusNoContent
+					responseBody = &auditResponseBody{Reader: strings.NewReader("")}
+					if len(attempts) < 3 {
+						if tt.err != nil {
+							responseBody = nil
+							return nil, tt.err
+						}
+						status = tt.status
+						if tt.readErr != nil {
+							responseBody.Reader = iotest.ErrReader(tt.readErr)
+						}
+					}
+					return &http.Response{StatusCode: status, Body: responseBody}, nil
+				})
+				observer, err := NewHTTPObserver("https://example.com/audit", client)
+				require.NoError(t, err)
+
+				err = observer.Update(context.Background(), event)
+
+				require.NoError(t, err)
+				require.Equal(t, []time.Duration{0, time.Second, 4 * time.Second}, attempts)
+				require.True(t, responseBody.closed)
+			})
+		})
+	}
+}
+
+func TestHTTPObserverUpdateRetriesWithinDeadline(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		timeout  time.Duration
+		attempts int
+	}{
+		{name: "audit timeout", timeout: 5 * time.Second, attempts: 3},
+		{name: "earlier parent deadline", timeout: 2 * time.Second, attempts: 2},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx := context.Background()
+				if tt.timeout < 5*time.Second {
+					var cancel context.CancelFunc
+					ctx, cancel = context.WithTimeout(ctx, tt.timeout)
+					defer cancel()
+				}
+				attempts := 0
+				client := auditHTTPClientFunc(func(req *http.Request) (*http.Response, error) {
+					defer req.Body.Close()
+					attempts++
+					return &http.Response{StatusCode: http.StatusServiceUnavailable, Body: http.NoBody}, nil
+				})
+				observer, err := NewHTTPObserver("https://example.com/audit", client)
+				require.NoError(t, err)
+				started := time.Now()
+
+				err = observer.Update(ctx, Event{})
+
+				require.ErrorIs(t, err, context.DeadlineExceeded)
+				require.Equal(t, tt.timeout, time.Since(started))
+				require.Equal(t, tt.attempts, attempts)
+			})
+		})
+	}
+}
+
+func TestHTTPObserverUpdateCancelsRetryWait(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		attempts := 0
+		client := auditHTTPClientFunc(func(req *http.Request) (*http.Response, error) {
+			defer req.Body.Close()
+			attempts++
+			return &http.Response{StatusCode: http.StatusServiceUnavailable, Body: http.NoBody}, nil
+		})
+		observer, err := NewHTTPObserver("https://example.com/audit", client)
+		require.NoError(t, err)
+		started := time.Now()
+		result := make(chan error, 1)
+		go func() { result <- observer.Update(ctx, Event{}) }()
+		synctest.Wait()
+
+		cancel()
+
+		require.ErrorIs(t, <-result, context.Canceled)
+		require.Equal(t, 1, attempts)
+		require.Zero(t, time.Since(started))
+	})
+}
+
+// Возвращаем ошибки клиента и таймаут для последующего логирования сервером.
 func TestHTTPObserverUpdateReturnsClientError(t *testing.T) {
 	for _, tt := range []struct {
 		name string
 		err  error
 	}{
-		{name: "connection error", err: errors.New("connection refused")},
+		{name: "non-network error", err: errors.New("client failure")},
 		{name: "timeout", err: context.DeadlineExceeded},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			client := auditHTTPClientFunc(func(req *http.Request) (*http.Response, error) {
-				return nil, tt.err
+			synctest.Test(t, func(t *testing.T) {
+				client := auditHTTPClientFunc(func(req *http.Request) (*http.Response, error) {
+					return nil, tt.err
+				})
+				observer, err := NewHTTPObserver("http://localhost:9090/audit", client)
+				require.NoError(t, err)
+
+				err = observer.Update(context.Background(), Event{Metrics: []string{"Alloc"}})
+
+				require.ErrorIs(t, err, tt.err)
 			})
-			observer, err := NewHTTPObserver("http://localhost:9090/audit", client)
-			require.NoError(t, err)
-
-			err = observer.Update(context.Background(), Event{Metrics: []string{"Alloc"}})
-
-			require.ErrorIs(t, err, tt.err)
 		})
 	}
 }

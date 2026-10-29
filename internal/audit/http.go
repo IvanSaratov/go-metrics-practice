@@ -4,11 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/IvanSaratov/go-metrics-practice/internal/retry"
 )
 
 const httpAuditTimeout = 5 * time.Second
@@ -41,7 +45,7 @@ func NewHTTPObserver(destination string, client HTTPClient) (*HTTPObserver, erro
 }
 
 // Update отправляет событие JSON-запросом POST с таймаутом 5 секунд.
-// Успешными считает только ответы 2xx.
+// Успешными считает только ответы 2xx. 5хх ретраиться.
 func (o *HTTPObserver) Update(ctx context.Context, event Event) error {
 	ctx, cancel := context.WithTimeout(ctx, httpAuditTimeout)
 	defer cancel()
@@ -50,23 +54,34 @@ func (o *HTTPObserver) Update(ctx context.Context, event Event) error {
 	if err != nil {
 		return fmt.Errorf("encode audit event: %w", err)
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, o.url, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("create audit request: %w", err)
-	}
-	request.Header.Set("Content-Type", "application/json")
+	return retry.Do(ctx, func(ctx context.Context) error {
+		request, err := http.NewRequestWithContext(ctx, http.MethodPost, o.url, bytes.NewReader(body))
+		if err != nil {
+			return fmt.Errorf("create audit request: %w", err)
+		}
+		request.Header.Set("Content-Type", "application/json")
 
-	response, err := o.client.Do(request)
-	if err != nil {
-		return fmt.Errorf("send audit event: %w", err)
-	}
-	defer response.Body.Close()
+		response, err := o.client.Do(request)
+		if err != nil {
+			err = fmt.Errorf("send audit event: %w", err)
+			if _, ok := errors.AsType[net.Error](err); ok {
+				return retry.RetryableError(err)
+			}
+			return err
+		}
+		defer response.Body.Close()
 
-	if _, err := io.Copy(io.Discard, response.Body); err != nil {
-		return fmt.Errorf("read audit response: %w", err)
-	}
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return fmt.Errorf("unexpected audit response status: %d", response.StatusCode)
-	}
-	return nil
+		_, readErr := io.Copy(io.Discard, response.Body)
+		if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+			err := fmt.Errorf("unexpected audit response status: %d", response.StatusCode)
+			if response.StatusCode >= http.StatusInternalServerError && response.StatusCode < 600 {
+				return retry.RetryableError(err)
+			}
+			return err
+		}
+		if readErr != nil {
+			return fmt.Errorf("read audit response: %w", readErr)
+		}
+		return nil
+	})
 }
