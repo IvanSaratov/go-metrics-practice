@@ -15,7 +15,8 @@ import (
 func TestFileObserverUpdateAppendsJSONLines(t *testing.T) {
 	file := &auditFileStub{}
 	existing := `{ "ts":1, "metrics":["old"], "ip_address":"127.0.0.1" }`
-	file.Buffer.WriteString(existing + "\n")
+	file.Buffer.WriteString(existing)
+	file.Buffer.WriteString("\n")
 	observer := NewFileObserver(file)
 
 	events := []Event{

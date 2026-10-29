@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -24,10 +25,15 @@ func NewFileObserver(file io.WriteCloser) *FileObserver {
 // Update записывает событие одной строкой JSON.
 // Контекст не используется.
 func (o *FileObserver) Update(_ context.Context, event Event) error {
+	var buffer bytes.Buffer
+	if err := json.NewEncoder(&buffer).Encode(event); err != nil {
+		return fmt.Errorf("encode audit event: %w", err)
+	}
+
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
-	if err := json.NewEncoder(o.file).Encode(event); err != nil {
+	if _, err := o.file.Write(buffer.Bytes()); err != nil {
 		return fmt.Errorf("write audit event: %w", err)
 	}
 	return nil
