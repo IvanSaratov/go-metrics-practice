@@ -23,7 +23,7 @@ type AsyncObserver struct {
 
 // NewAsyncObserver запускает фоновую обработку с очередью размера bufferSize.
 // bufferSize должен быть положительным. Ошибки доставки и число потерь передаются в onError, если он задан.
-// Если приёмник реализует io.Closer, обёртка закроет его при остановке. Вот такая вот собачка.
+// Если приёмник реализует io.Closer, обёртка закроет его при остановке.
 func NewAsyncObserver(observer Observer, bufferSize int, onError func(error)) *AsyncObserver {
 	ctx, cancel := context.WithCancel(context.Background())
 	async := &AsyncObserver{
