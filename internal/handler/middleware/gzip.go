@@ -17,7 +17,8 @@ const (
 	identityEncoding = "identity"
 )
 
-// GzipMiddleware распаковывает gzip-запросы и сжимает JSON/HTML-ответы
+// GzipMiddleware распаковывает тело запроса, сжатое gzip.
+// JSON- и HTML-ответы сжимает, если клиент принимает gzip через Accept-Encoding.
 func GzipMiddleware(next http.Handler) http.Handler {
 	// Используем встроенный комрессор в либе
 	compressResponses := chimiddleware.Compress(

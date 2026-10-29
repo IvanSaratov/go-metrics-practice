@@ -35,11 +35,13 @@ const (
 	getAllCountersQuery = `SELECT name, value FROM counters`
 )
 
+// PostgresStorage хранит метрики в PostgreSQL.
 type PostgresStorage struct {
 	database *sql.DB
 	retry    func(context.Context, func(context.Context) error) error
 }
 
+// NewPostgresStorage создаёт хранилище для переданной базы данных.
 func NewPostgresStorage(database *sql.DB) *PostgresStorage {
 	return &PostgresStorage{
 		database: database,
@@ -49,6 +51,7 @@ func NewPostgresStorage(database *sql.DB) *PostgresStorage {
 	}
 }
 
+// SetGauge записывает новое значение gauge в базу.
 func (s *PostgresStorage) SetGauge(ctx context.Context, name string, value float64) error {
 	err := s.retry(ctx, func(ctx context.Context) error {
 		_, err := s.database.ExecContext(ctx, setGaugeQuery, name, value)
@@ -61,6 +64,7 @@ func (s *PostgresStorage) SetGauge(ctx context.Context, name string, value float
 	return nil
 }
 
+// AddCounter прибавляет value к счётчику в базе и возвращает новое значение.
 func (s *PostgresStorage) AddCounter(ctx context.Context, name string, value int64) (int64, error) {
 	var total int64
 	err := s.retry(ctx, func(ctx context.Context) error {
@@ -74,6 +78,7 @@ func (s *PostgresStorage) AddCounter(ctx context.Context, name string, value int
 	return total, nil
 }
 
+// UpdateBatch проверяет метрики и сохраняет весь пакет в одной транзакции.
 func (s *PostgresStorage) UpdateBatch(ctx context.Context, metrics []models.Metrics) error {
 	// Ссылаемся на общий метод
 	if err := models.ValidateUpdates(metrics); err != nil {
@@ -128,6 +133,7 @@ func (s *PostgresStorage) updateBatch(ctx context.Context, metrics []models.Metr
 	return nil
 }
 
+// GetGauge возвращает значение gauge из базы и сообщает, найдена ли метрика.
 func (s *PostgresStorage) GetGauge(ctx context.Context, name string) (float64, bool, error) {
 	var value float64
 	err := s.retry(ctx, func(ctx context.Context) error {
@@ -144,6 +150,7 @@ func (s *PostgresStorage) GetGauge(ctx context.Context, name string) (float64, b
 	return value, true, nil
 }
 
+// GetCounter возвращает значение counter из базы и сообщает, найден ли счётчик.
 func (s *PostgresStorage) GetCounter(ctx context.Context, name string) (int64, bool, error) {
 	var value int64
 	err := s.retry(ctx, func(ctx context.Context) error {
@@ -160,6 +167,7 @@ func (s *PostgresStorage) GetCounter(ctx context.Context, name string) (int64, b
 	return value, true, nil
 }
 
+// GetAllGauges читает все gauge из базы в новую map.
 func (s *PostgresStorage) GetAllGauges(ctx context.Context) (map[string]float64, error) {
 	var values map[string]float64
 	err := s.retry(ctx, func(ctx context.Context) error {
@@ -201,6 +209,7 @@ func retryPostgresError(err error) error {
 	return err
 }
 
+// GetAllCounters читает все counter из базы в новую map.
 func (s *PostgresStorage) GetAllCounters(ctx context.Context) (map[string]int64, error) {
 	var values map[string]int64
 	err := s.retry(ctx, func(ctx context.Context) error {

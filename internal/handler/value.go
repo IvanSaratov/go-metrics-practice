@@ -8,16 +8,20 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+// ValueHandler обрабатывает запросы на чтение метрик.
 type ValueHandler struct {
 	storage repository.Storage
 }
 
+// NewValueHandler создаёт обработчик чтения метрик из storage.
 func NewValueHandler(storage repository.Storage) *ValueHandler {
 	return &ValueHandler{
 		storage: storage,
 	}
 }
 
+// ServeHTTP возвращает значение метрики текстом по GET /value/{type}/{name}.
+// Если метрика не найдена, возвращает 404.
 func (h *ValueHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	metricType := chi.URLParam(r, "type")
 	metricName := chi.URLParam(r, "name")
@@ -62,7 +66,9 @@ func (h *ValueHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotFound)
 }
 
-// ServeJSON возвращает актуальное значение запрошенной метрики
+// ServeJSON возвращает метрику в JSON по запросу POST /value.
+// В теле запроса нужны id и type, без value и delta.
+// Если метрика не найдена, возвращает 404.
 func (h *ValueHandler) ServeJSON(w http.ResponseWriter, r *http.Request) {
 	var metric models.Metrics
 	if requestError := decodeJSON(w, r, &metric); requestError != nil {

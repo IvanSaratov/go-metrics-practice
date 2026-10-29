@@ -1,8 +1,9 @@
+// Package migrations содержит SQL-миграции, встроенные в приложение.
 package migrations
 
 import "embed"
 
-// Будем миграции держать внутри сервера для применения при старте
+// Files содержит встроенные SQL-файлы миграций.
 //
 //go:embed *.sql
 var Files embed.FS

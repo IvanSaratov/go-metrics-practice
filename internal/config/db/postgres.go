@@ -1,3 +1,4 @@
+// Package db создаёт пул соединений с PostgreSQL и применяет миграции.
 package db
 
 import (
@@ -7,7 +8,8 @@ import (
 	"github.com/lib/pq"
 )
 
-// Создание пула соединений
+// Open создаёт пул соединений с PostgreSQL по строке dsn.
+// Подключение к базе не проверяет; для этого нужен PingContext.
 func Open(dsn string) (*sql.DB, error) {
 	connector, err := pq.NewConnector(dsn)
 	if err != nil {

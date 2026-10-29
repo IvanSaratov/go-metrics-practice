@@ -32,10 +32,14 @@ var gzipWriterPool = sync.Pool{
 	},
 }
 
+// HTTPClient выполняет HTTP-запросы агента. Подходит стандартный *http.Client.
 type HTTPClient interface {
+	// Do отправляет запрос и возвращает ответ сервера.
+	// Тело ответа закрывает вызывающий код.
 	Do(req *http.Request) (*http.Response, error)
 }
 
+// Client отправляет метрики на сервер в JSON, сжатом gzip.
 type Client struct {
 	baseURL    string
 	httpClient HTTPClient
@@ -43,7 +47,9 @@ type Client struct {
 	key        string
 }
 
-// NewClient создаёт HTTP-клиент агента с необязательным ключом подписи.
+// NewClient создаёт клиент для отправки метрик через httpClient.
+// baseURL — адрес сервера со схемой и без слеша в конце.
+// Если key пустой, запросы не подписываются.
 func NewClient(baseURL string, httpClient HTTPClient, key string) *Client {
 	return &Client{
 		baseURL:    baseURL,
@@ -55,6 +61,7 @@ func NewClient(baseURL string, httpClient HTTPClient, key string) *Client {
 	}
 }
 
+// SendGauge отправляет новое значение gauge через POST /update.
 func (c *Client) SendGauge(name string, value float64) error {
 	return c.sendMetric(context.Background(), models.Metrics{
 		ID:    name,
@@ -63,6 +70,7 @@ func (c *Client) SendGauge(name string, value float64) error {
 	})
 }
 
+// SendCounter отправляет прибавку к счётчику через POST /update.
 func (c *Client) SendCounter(name string, value int64) error {
 	return c.sendMetric(context.Background(), models.Metrics{
 		ID:    name,
@@ -71,6 +79,8 @@ func (c *Client) SendCounter(name string, value int64) error {
 	})
 }
 
+// SendBatch отправляет пакет метрик через POST /updates/.
+// Если пакет пустой, возвращает nil без отправки запроса.
 func (c *Client) SendBatch(ctx context.Context, metrics []models.Metrics) error {
 	if len(metrics) == 0 {
 		return nil

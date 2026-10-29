@@ -5,7 +5,9 @@ import (
 	"net/http"
 )
 
+// Database позволяет проверить подключение к базе в обработчике /ping.
 type Database interface {
+	// PingContext возвращает nil, если база доступна.
 	PingContext(context.Context) error
 }
 

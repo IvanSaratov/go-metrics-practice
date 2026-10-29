@@ -1,3 +1,4 @@
+// Package agent собирает метрики приложения и системы и отправляет их на сервер.
 package agent
 
 import (
@@ -8,6 +9,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// Agent периодически собирает метрики и отправляет их через Client.
 type Agent struct {
 	metrics         *Metrics
 	client          *Client
@@ -17,6 +19,10 @@ type Agent struct {
 	systemCollector systemMetricsCollector
 }
 
+// NewAgent создаёт агента для сбора и отправки метрик.
+// pollInterval задаёт интервал сбора, reportInterval — интервал отправки.
+// rateLimit ограничивает число одновременных запросов к серверу.
+// Интервалы и rateLimit должны быть положительными.
 func NewAgent(
 	metrics *Metrics,
 	client *Client,
@@ -34,7 +40,9 @@ func NewAgent(
 	}
 }
 
-// запускает независимый сбор метрик и пул воркеров отправки
+// Run запускает сбор и отправку метрик и работает до отмены ctx.
+// Перед возвратом ждёт завершения всех горутин агента.
+// Ошибки сбора и отправки записываются в лог и не останавливают агента.
 func (a *Agent) Run(ctx context.Context) {
 	reports := make(chan struct{})
 	var workers sync.WaitGroup

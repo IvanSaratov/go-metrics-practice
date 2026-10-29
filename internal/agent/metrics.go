@@ -9,6 +9,7 @@ import (
 	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
 )
 
+// Metrics хранит собранные метрики. Можно использовать из нескольких горутин.
 type Metrics struct {
 	mu       sync.RWMutex
 	gauges   map[string]float64
@@ -51,6 +52,7 @@ var runtimeGaugeNames = []string{
 	"TotalAlloc",
 }
 
+// NewMetrics создаёт пустое хранилище метрик агента.
 func NewMetrics() *Metrics {
 	return &Metrics{
 		gauges:   make(map[string]float64),

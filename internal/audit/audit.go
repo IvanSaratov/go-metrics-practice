@@ -1,3 +1,4 @@
+// Package audit передаёт события обновления метрик в файл или на HTTP-сервер.
 package audit
 
 import (
@@ -5,29 +6,34 @@ import (
 	"errors"
 )
 
-// Описывает успешный запрос на обновление метрик.
+// Event описывает успешный запрос на обновление метрик.
 type Event struct {
-	Timestamp int64    `json:"ts"`
-	Metrics   []string `json:"metrics"`
-	IPAddress string   `json:"ip_address"`
+	// Timestamp — Unix-время события в секундах.
+	Timestamp int64 `json:"ts"`
+	// Metrics содержит имена обновлённых метрик.
+	Metrics []string `json:"metrics"`
+	// IPAddress — IP-адрес клиента без порта.
+	IPAddress string `json:"ip_address"`
 }
 
-// Принимает события аудита.
+// Observer принимает события аудита.
 type Observer interface {
+	// Update обрабатывает одно событие.
 	Update(context.Context, Event) error
 }
 
-// Уведомляет подключённых наблюдателей.
+// Publisher передаёт события всем приёмникам аудита.
 type Publisher struct {
 	observers []Observer
 }
 
-// Подключает приёмники аудита к издателю.
+// NewPublisher создаёт издателя с заданными приёмниками аудита.
 func NewPublisher(observers ...Observer) *Publisher {
 	return &Publisher{observers: append([]Observer(nil), observers...)}
 }
 
-// Доставляет событие всем наблюдателям и объединяет ошибки доставки.
+// Notify по очереди передаёт событие всем приёмникам.
+// Ошибки отдельных приёмников не прерывают отправку и возвращаются вместе.
 func (p *Publisher) Notify(ctx context.Context, event Event) error {
 	var notificationErrors []error
 	for _, observer := range p.observers {

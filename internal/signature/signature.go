@@ -1,3 +1,4 @@
+// Package signature вычисляет и проверяет подписи HMAC-SHA256.
 package signature
 
 import (
@@ -6,14 +7,16 @@ import (
 	"encoding/hex"
 )
 
+// HeaderName — имя HTTP-заголовка с подписью тела запроса или ответа.
 const HeaderName = "HashSHA256"
 
-// вычисляет HMAC-SHA256 и возвращает его в hex-формате
+// Sum вычисляет HMAC-SHA256 и возвращает подпись в hex-формате.
 func Sum(value []byte, key string) string {
 	return hex.EncodeToString(digest(value, key))
 }
 
-// проверяет, что подпись соответствует данным и ключу
+// Verify проверяет, что подпись соответствует данным и ключу.
+// Если encodedHash содержит некорректный hex, возвращает false.
 func Verify(value []byte, key, encodedHash string) bool {
 	receivedHash, err := hex.DecodeString(encodedHash)
 	if err != nil {

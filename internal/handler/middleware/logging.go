@@ -1,3 +1,4 @@
+// Package middleware содержит middleware для логирования, gzip и подписи данных.
 package middleware
 
 import (
@@ -8,6 +9,8 @@ import (
 	"go.uber.org/zap"
 )
 
+// LoggingMiddleware записывает в лог метод и адрес запроса, статус и размер ответа.
+// Запись делается после обработки запроса и содержит время его выполнения.
 func LoggingMiddleware(log *zap.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

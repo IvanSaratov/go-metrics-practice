@@ -8,8 +8,9 @@ import (
 	"github.com/IvanSaratov/go-metrics-practice/internal/signature"
 )
 
-// проверяет подпись запроса и подписывает тело ответа
-// поскольку проект чисто учебнй - то будем шифровать уже готовые gzip байты
+// SignatureMiddleware проверяет HashSHA256, если заголовок передан, и подписывает ответ.
+// Если key пустой, проверка и подпись отключены.
+// При работе с gzip должен оборачивать GzipMiddleware, чтобы подписывать сжатые данные.
 func SignatureMiddleware(key string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		if key == "" {
