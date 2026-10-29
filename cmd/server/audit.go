@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/IvanSaratov/go-metrics-practice/internal/audit"
@@ -66,16 +67,18 @@ func newAudit(
 
 type auditCloser []*audit.AsyncObserver
 
+// Закрытие всех наблюдателей параллельно в пределах одного таймаута.
 func (observers auditCloser) Close() error {
-	// Все очереди обрабатываются параллельно и делят один таймаут остановки.
 	ctx, cancel := context.WithTimeout(context.Background(), auditShutdownTimeout)
 	defer cancel()
-	var errs []error
-	for _, observer := range observers {
-		if err := observer.Shutdown(ctx); err != nil {
-			errs = append(errs, err)
-		}
+	errs := make([]error, len(observers))
+	var wg sync.WaitGroup
+	for i, observer := range observers {
+		wg.Go(func() {
+			errs[i] = observer.Shutdown(ctx)
+		})
 	}
+	wg.Wait()
 	return errors.Join(errs...)
 }
 
