@@ -14,6 +14,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v2
 
+        # Я решил улучшить системный workflow что бы эти проверки запускались всегда
+      - name: Run project staticlint
+        run: go run ./cmd/staticlint ./...
+
       - name: Download statictest binary
         uses: robinraju/release-downloader@v1.8
         with:
