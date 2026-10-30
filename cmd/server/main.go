@@ -12,6 +12,10 @@ import (
 )
 
 func main() {
+	runMain()
+}
+
+func runMain() {
 	appLogger, err := applogger.New(false)
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "create logger: %v\n", err)

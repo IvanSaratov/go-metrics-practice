@@ -2,6 +2,7 @@ package noosexit
 
 import (
 	"go/ast"
+	"strings"
 
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/types/typeutil"
@@ -20,6 +21,11 @@ func run(pass *analysis.Pass) (any, error) {
 	}
 
 	for _, file := range pass.Files {
+		// Go сам создаёт main для тестов.
+		if strings.HasSuffix(pass.Pkg.Path(), ".test") && ast.IsGenerated(file) {
+			continue
+		}
+
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok || fn.Name.Name != "main" || fn.Recv != nil || fn.Body == nil {
