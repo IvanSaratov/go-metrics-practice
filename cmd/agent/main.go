@@ -15,6 +15,12 @@ import (
 	"github.com/urfave/cli/v2"
 )
 
+var (
+	buildVersion string
+	buildDate    string
+	buildCommit  string
+)
+
 type agentConfig struct {
 	serverAddress  string
 	pollInterval   time.Duration
@@ -25,6 +31,20 @@ type agentConfig struct {
 }
 
 func main() {
+	// Если данные сборки не передали, выводим N/A.
+	if buildVersion == "" {
+		buildVersion = "N/A"
+	}
+	if buildDate == "" {
+		buildDate = "N/A"
+	}
+	if buildCommit == "" {
+		buildCommit = "N/A"
+	}
+	fmt.Printf("Build version: %s\n", buildVersion)
+	fmt.Printf("Build date: %s\n", buildDate)
+	fmt.Printf("Build commit: %s\n", buildCommit)
+
 	app := newAgentApp(runAgent)
 	if err := app.Run(os.Args); err != nil {
 		log.Fatal(err)
