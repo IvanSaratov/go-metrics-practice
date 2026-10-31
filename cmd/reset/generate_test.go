@@ -17,6 +17,11 @@ func TestGenerateProducesWorkingMethods(t *testing.T) {
 	require.FileExists(t, filepath.Join(root, "reset.gen.go"))
 	require.FileExists(t, filepath.Join(root, "child", "reset.gen.go"))
 
+	runModuleTests(t, root)
+}
+
+func runModuleTests(t *testing.T, root string) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	command := exec.CommandContext(ctx, "go", "test", "-count=1", "./...")
@@ -57,4 +62,103 @@ func TestGenerateDoesNotWriteAfterLoadError(t *testing.T) {
 	require.Error(t, generate(root))
 	require.NoFileExists(t, filepath.Join(root, "reset.gen.go"))
 	require.NoFileExists(t, filepath.Join(root, "child", "reset.gen.go"))
+}
+
+func TestGenerateBeforeResetExists(t *testing.T) {
+	root := newModule(t, map[string]string{
+		"model.go": `package sample
+import "example.com/resetfixture/child"
+// generate:reset
+type Value struct { Child child.Counter }
+var _ interface { Reset() } = (*Value)(nil)
+var _ interface { Reset() } = (*child.Counter)(nil)
+func Clear(value *Value) { value.Reset() }
+`,
+		"child/model.go": "package child\n// generate:reset\ntype Counter struct { Count int }\n",
+		"model_test.go": `package sample
+import "testing"
+func TestReset(t *testing.T) {
+    value := new(Value)
+    value.Child.Count = 9
+    Clear(value)
+    if value.Child.Count != 0 { t.Fatal("вложенная структура не сброшена") }
+}
+`,
+	})
+	require.NoError(t, generate(root))
+	runModuleTests(t, root)
+}
+
+func TestGenerateAgain(t *testing.T) {
+	root := copyFixture(t)
+	require.NoError(t, generate(root))
+	paths := []string{filepath.Join(root, "reset.gen.go"), filepath.Join(root, "child", "reset.gen.go")}
+	before := make([][]byte, len(paths))
+	for i, path := range paths {
+		var err error
+		before[i], err = os.ReadFile(path)
+		require.NoError(t, err)
+	}
+	require.NoError(t, generate(root))
+	for i, path := range paths {
+		after, err := os.ReadFile(path)
+		require.NoError(t, err)
+		require.Equal(t, before[i], after)
+	}
+}
+
+func TestGenerateUpdatesChangedTypes(t *testing.T) {
+	root := newModule(t, map[string]string{
+		"model.go": `package sample
+// generate:reset
+type Value struct { Old string }
+// generate:reset
+type Gone struct { Count int }
+// generate:reset
+type Unmarked struct { Count int }
+`,
+	})
+	require.NoError(t, generate(root))
+	updated := `package sample
+// generate:reset
+type Value struct { New int; Items []string }
+type Unmarked struct { Count int }
+`
+	require.NoError(t, os.WriteFile(filepath.Join(root, "model.go"), []byte(updated), 0o644))
+	test := `package sample
+import "testing"
+func TestReset(t *testing.T) {
+    value := Value{New: 5, Items: []string{"value"}}
+    value.Reset()
+    if value.New != 0 || len(value.Items) != 0 { t.Fatal("новые поля не сброшены") }
+    if _, ok := any(&Unmarked{}).(interface { Reset() }); ok { t.Fatal("лишний Reset") }
+}
+`
+	require.NoError(t, os.WriteFile(filepath.Join(root, "model_test.go"), []byte(test), 0o644))
+	require.NoError(t, generate(root))
+	runModuleTests(t, root)
+
+	require.NoError(t, os.WriteFile(filepath.Join(root, "model.go"), []byte("package sample\ntype Value struct { New int }\n"), 0o644))
+	require.NoError(t, os.Remove(filepath.Join(root, "model_test.go")))
+	require.NoError(t, generate(root))
+	require.NoFileExists(t, filepath.Join(root, "reset.gen.go"))
+	runModuleTests(t, root)
+}
+
+func TestGenerateRejectsResetConflicts(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		code string
+	}{
+		{name: "manual method", code: "// generate:reset\ntype Value struct{}\nfunc (*Value) Reset() {}"},
+		{name: "field", code: "// generate:reset\ntype Value struct{ Reset int }"},
+		{name: "arguments", code: "type Child struct{}\nfunc (*Child) Reset(int) {}\n// generate:reset\ntype Value struct{ Child Child }"},
+		{name: "result", code: "type Child struct{}\nfunc (*Child) Reset() int { return 1 }\n// generate:reset\ntype Value struct{ Child Child }"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := newModule(t, map[string]string{"model.go": "package sample\n" + tt.code + "\n"})
+			require.ErrorContains(t, generate(root), "Reset")
+			require.NoFileExists(t, filepath.Join(root, "reset.gen.go"))
+		})
+	}
 }

@@ -23,16 +23,21 @@ func generate(root string) error {
 	}
 	var files []outputFile
 	for _, pkg := range pkgs {
-		if len(pkg.structs) == 0 {
-			continue
-		}
 		path := filepath.Join(pkg.dir, "reset.gen.go")
 		previous, err := os.ReadFile(path)
 		if err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("чтение %s: %w", path, err)
 		}
+		owned := err == nil && bytes.HasPrefix(previous, []byte(generatedHeader))
+		if len(pkg.structs) == 0 {
+			if owned {
+				// Меток больше нет, поэтому свой старый файл нужно удалить.
+				files = append(files, outputFile{path: path})
+			}
+			continue
+		}
 		// По первой строке узнаём свой файл, чтобы не затереть чужой
-		if err == nil && !bytes.HasPrefix(previous, []byte(generatedHeader)) {
+		if err == nil && !owned {
 			return fmt.Errorf("файл %s создан не этой утилитой", path)
 		}
 		data, err := renderPackage(pkg)
@@ -44,6 +49,13 @@ func generate(root string) error {
 
 	// Сначала проверяем все пакеты, потом записываем результат
 	for _, file := range files {
+		// nil в data означает, что файл нужно удалить.
+		if file.data == nil {
+			if err := os.Remove(file.path); err != nil {
+				return fmt.Errorf("удаление %s: %w", file.path, err)
+			}
+			continue
+		}
 		if err := writeGeneratedFile(file.path, file.data); err != nil {
 			return fmt.Errorf("запись %s: %w", file.path, err)
 		}
@@ -63,28 +75,11 @@ func renderPackage(pkg packageInfo) ([]byte, error) {
 				continue
 			}
 			expr := "r." + field.Name()
-			// Раскрываем именованные типы: например, type count int тоже сбрасываем в 0
-			switch typ := field.Type().Underlying().(type) {
-			case *types.Basic:
-				zero := "0"
-				switch {
-				case typ.Info()&types.IsBoolean != 0:
-					zero = "false"
-				case typ.Info()&types.IsString != 0:
-					zero = `""`
-				case typ.Kind() == types.UnsafePointer:
-					zero = "nil"
-				}
-				fmt.Fprintf(&out, "%s = %s\n", expr, zero)
-			case *types.Slice:
-				// Оставляем память среза для повторного использования
-				fmt.Fprintf(&out, "%s = %s[:0]\n", expr, expr)
-			case *types.Map:
-				// Очищаем существующую мапу, не создавая новую
-				fmt.Fprintf(&out, "clear(%s)\n", expr)
-			default:
-				return nil, fmt.Errorf("поле %s.%s: тип %s пока не поддерживается", named.Obj().Name(), field.Name(), field.Type())
+			code, err := resetValue(expr, field.Type(), 0)
+			if err != nil {
+				return nil, fmt.Errorf("поле %s.%s: %w", named.Obj().Name(), field.Name(), err)
 			}
+			out.WriteString(code)
 		}
 		out.WriteString("}\n")
 	}
@@ -94,6 +89,65 @@ func renderPackage(pkg packageInfo) ([]byte, error) {
 		return nil, fmt.Errorf("форматирование пакета %s: %w", pkg.name, err)
 	}
 	return data, nil
+}
+
+// resetValue выбирает, какой код нужен для генерации Reset.
+func resetValue(expr string, fieldType types.Type, depth int) (string, error) {
+	// Раскрываем именованные типы: например, type count int тоже сбрасываем в 0.
+	switch typ := fieldType.Underlying().(type) {
+	case *types.Basic:
+		zero := "0"
+		switch {
+		case typ.Info()&types.IsBoolean != 0:
+			zero = "false"
+		case typ.Info()&types.IsString != 0:
+			zero = `""`
+		case typ.Kind() == types.UnsafePointer:
+			zero = "nil"
+		}
+		return fmt.Sprintf("%s = %s\n", expr, zero), nil
+	case *types.Slice:
+		// Оставляем память среза для повторного использования.
+		return fmt.Sprintf("%s = %s[:0]\n", expr, expr), nil
+	case *types.Map:
+		// Очищаем существующую мапу, не создавая новую.
+		return fmt.Sprintf("clear(%s)\n", expr), nil
+	case *types.Pointer:
+		// Применяем те же правила к значению за указателем, сам указатель сохраняем.
+		code, err := resetValue("(*"+expr+")", typ.Elem(), depth)
+		if err != nil || code == "" {
+			return code, err
+		}
+		// К значению обращаемся только после проверки указателя на nil.
+		return fmt.Sprintf("if %s != nil {\n%s}\n", expr, code), nil
+	case *types.Struct:
+		// Ищем Reset, в том числе метод с указательным получателем.
+		object, _, _ := types.LookupFieldOrMethod(fieldType, true, nil, "Reset")
+		method, ok := object.(*types.Func)
+		if !ok {
+			// Структуру без Reset оставляем как есть.
+			return "", nil
+		}
+		signature := method.Type().(*types.Signature)
+		// Поддерживаем только Reset() без аргументов и результата.
+		if signature.Params().Len() != 0 || signature.Results().Len() != 0 {
+			return "", fmt.Errorf("метод %s.Reset должен быть без параметров и результатов", fieldType)
+		}
+		return fmt.Sprintf("%s.Reset()\n", expr), nil
+	case *types.Array:
+		// Для вложенных массивов используем разные индексы: i0, i1 и так дальше.
+		index := fmt.Sprintf("i%d", depth)
+		code, err := resetValue(expr+"["+index+"]", typ.Elem(), depth+1)
+		if err != nil || code == "" {
+			return code, err
+		}
+		return fmt.Sprintf("for %s := range %s {\n%s}\n", index, expr, code), nil
+	case *types.Chan, *types.Signature, *types.Interface:
+		// У этих типов нулевое значение.
+		return fmt.Sprintf("%s = nil\n", expr), nil
+	default:
+		return "", fmt.Errorf("тип %s пока не поддерживается", fieldType)
+	}
 }
 
 func writeGeneratedFile(path string, data []byte) error {

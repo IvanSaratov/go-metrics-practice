@@ -20,7 +20,7 @@ func TestLoadPackagesFindsMarkedStructs(t *testing.T) {
 		}
 	}
 	require.Equal(t, map[string][]string{
-		"fixture": {"Basic", "Empty", "Grouped", "Second"},
+		"fixture": {"Basic", "Embedded", "Empty", "Grouped", "Nested", "Node", "Second"},
 		"child":   {"Counter"},
 	}, found)
 }
