@@ -75,7 +75,7 @@ func renderPackage(pkg packageInfo) ([]byte, error) {
 				continue
 			}
 			expr := "r." + field.Name()
-			code, err := resetValue(expr, field.Type(), 0)
+			code, err := resetValue(expr, field.Type(), nil)
 			if err != nil {
 				return nil, fmt.Errorf("поле %s.%s: %w", named.Obj().Name(), field.Name(), err)
 			}
@@ -92,7 +92,13 @@ func renderPackage(pkg packageInfo) ([]byte, error) {
 }
 
 // resetValue выбирает, какой код нужен для генерации Reset.
-func resetValue(expr string, fieldType types.Type, depth int) (string, error) {
+func resetValue(expr string, fieldType types.Type, parents []types.Type) (string, error) {
+	// Повтор типа при разборе указателей или массивов зациклит генератор.
+	for _, parent := range parents {
+		if types.Identical(parent, fieldType) {
+			return "", fmt.Errorf("рекурсивный тип %s пока не поддерживается", fieldType)
+		}
+	}
 	// Раскрываем именованные типы: например, type count int тоже сбрасываем в 0.
 	switch typ := fieldType.Underlying().(type) {
 	case *types.Basic:
@@ -114,7 +120,7 @@ func resetValue(expr string, fieldType types.Type, depth int) (string, error) {
 		return fmt.Sprintf("clear(%s)\n", expr), nil
 	case *types.Pointer:
 		// Применяем те же правила к значению за указателем, сам указатель сохраняем.
-		code, err := resetValue("(*"+expr+")", typ.Elem(), depth)
+		code, err := resetValue("(*"+expr+")", typ.Elem(), append(parents, fieldType))
 		if err != nil || code == "" {
 			return code, err
 		}
@@ -136,8 +142,8 @@ func resetValue(expr string, fieldType types.Type, depth int) (string, error) {
 		return fmt.Sprintf("%s.Reset()\n", expr), nil
 	case *types.Array:
 		// Для вложенных массивов используем разные индексы: i0, i1 и так дальше.
-		index := fmt.Sprintf("i%d", depth)
-		code, err := resetValue(expr+"["+index+"]", typ.Elem(), depth+1)
+		index := fmt.Sprintf("i%d", len(parents))
+		code, err := resetValue(expr+"["+index+"]", typ.Elem(), append(parents, fieldType))
 		if err != nil || code == "" {
 			return code, err
 		}

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"testing"
 	"time"
 
@@ -161,4 +162,27 @@ func TestGenerateRejectsResetConflicts(t *testing.T) {
 			require.NoFileExists(t, filepath.Join(root, "reset.gen.go"))
 		})
 	}
+}
+
+func TestGenerateRejectsRecursiveTypes(t *testing.T) {
+	if os.Getenv("RESET_TYPE_CYCLE_CHILD") == "1" {
+		// Ограничиваем стек отдельного процесса, чтобы ошибка не уронила все тесты.
+		debug.SetMaxStack(256 << 10)
+		for _, declaration := range []string{"type Recursive *Recursive", "type Recursive [1]*Recursive"} {
+			root := newModule(t, map[string]string{
+				"model.go": "package sample\n" + declaration + "\n// generate:reset\ntype Value struct { Next Recursive }\n",
+			})
+			require.ErrorContains(t, generate(root), "рекурсивный тип")
+			require.NoFileExists(t, filepath.Join(root, "reset.gen.go"))
+		}
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestGenerateRejectsRecursiveTypes$")
+	command.Env = append(os.Environ(), "RESET_TYPE_CYCLE_CHILD=1")
+	output, err := command.CombinedOutput()
+	require.NoError(t, ctx.Err())
+	require.NoError(t, err, "%s", output)
 }

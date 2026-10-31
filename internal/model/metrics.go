@@ -13,6 +13,7 @@ const (
 // Metrics хранит данные одной метрики.
 // У gauge значение находится в Value, у counter — в Delta.
 // nil означает, что значение не передали.
+// generate:reset
 type Metrics struct {
 	ID    string   `json:"id"`
 	MType string   `json:"type"`
