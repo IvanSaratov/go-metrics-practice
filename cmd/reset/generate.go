@@ -119,8 +119,12 @@ func resetValue(expr string, fieldType types.Type, parents []types.Type) (string
 		// Очищаем существующую мапу, не создавая новую.
 		return fmt.Sprintf("clear(%s)\n", expr), nil
 	case *types.Pointer:
+		// Явно копируем цепочку типов, чтобы рекурсия не меняла срез родителя.
+		nextParents := make([]types.Type, len(parents)+1)
+		copy(nextParents, parents)
+		nextParents[len(parents)] = fieldType
 		// Применяем те же правила к значению за указателем, сам указатель сохраняем.
-		code, err := resetValue("(*"+expr+")", typ.Elem(), append(parents, fieldType))
+		code, err := resetValue("(*"+expr+")", typ.Elem(), nextParents)
 		if err != nil || code == "" {
 			return code, err
 		}
@@ -143,7 +147,11 @@ func resetValue(expr string, fieldType types.Type, parents []types.Type) (string
 	case *types.Array:
 		// Для вложенных массивов используем разные индексы: i0, i1 и так дальше.
 		index := fmt.Sprintf("i%d", len(parents))
-		code, err := resetValue(expr+"["+index+"]", typ.Elem(), append(parents, fieldType))
+		// Так же как выше
+		nextParents := make([]types.Type, len(parents)+1)
+		copy(nextParents, parents)
+		nextParents[len(parents)] = fieldType
+		code, err := resetValue(expr+"["+index+"]", typ.Elem(), nextParents)
 		if err != nil || code == "" {
 			return code, err
 		}
