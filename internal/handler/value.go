@@ -3,7 +3,7 @@ package handler
 import (
 	"net/http"
 
-	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
+	"github.com/IvanSaratov/go-metrics-practice/internal/model"
 	"github.com/IvanSaratov/go-metrics-practice/internal/repository"
 	"github.com/go-chi/chi/v5"
 )
@@ -70,7 +70,7 @@ func (h *ValueHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // В теле запроса нужны id и type, без value и delta.
 // Если метрика не найдена, возвращает 404.
 func (h *ValueHandler) ServeJSON(w http.ResponseWriter, r *http.Request) {
-	var metric models.Metrics
+	var metric model.Metrics
 	if requestError := decodeJSON(w, r, &metric); requestError != nil {
 		writeJSONError(w, requestError.status, requestError.message)
 		return
@@ -85,7 +85,7 @@ func (h *ValueHandler) ServeJSON(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch metric.MType {
-	case models.Gauge:
+	case model.Gauge:
 		value, ok, err := h.storage.GetGauge(r.Context(), metric.ID)
 		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, "failed to read metric")
@@ -97,7 +97,7 @@ func (h *ValueHandler) ServeJSON(w http.ResponseWriter, r *http.Request) {
 		}
 		metric.Value = &value
 		metric.Delta = nil
-	case models.Counter:
+	case model.Counter:
 		value, ok, err := h.storage.GetCounter(r.Context(), metric.ID)
 		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, "failed to read metric")

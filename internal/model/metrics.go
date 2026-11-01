@@ -1,5 +1,5 @@
-// Package models содержит структуру метрики и функции её проверки.
-package models
+// Package model содержит структуру метрики и функции её проверки.
+package model
 
 import "fmt"
 
@@ -13,6 +13,7 @@ const (
 // Metrics хранит данные одной метрики.
 // У gauge значение находится в Value, у counter — в Delta.
 // nil означает, что значение не передали.
+// generate:reset
 type Metrics struct {
 	ID    string   `json:"id"`
 	MType string   `json:"type"`
@@ -22,22 +23,22 @@ type Metrics struct {
 }
 
 // ValidateUpdate проверяет имя и тип метрики, а также поля Value и Delta.
-func (m Metrics) ValidateUpdate() error {
-	if m.ID == "" {
+func (r Metrics) ValidateUpdate() error {
+	if r.ID == "" {
 		return fmt.Errorf("metric id is required")
 	}
 
-	switch m.MType {
+	switch r.MType {
 	case Gauge:
-		if m.Value == nil || m.Delta != nil {
+		if r.Value == nil || r.Delta != nil {
 			return fmt.Errorf("gauge requires value only")
 		}
 	case Counter:
-		if m.Delta == nil || m.Value != nil {
+		if r.Delta == nil || r.Value != nil {
 			return fmt.Errorf("counter requires delta only")
 		}
 	default:
-		return fmt.Errorf("unsupported metric type %q", m.MType)
+		return fmt.Errorf("unsupported metric type %q", r.MType)
 	}
 
 	return nil

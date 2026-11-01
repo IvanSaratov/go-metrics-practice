@@ -9,17 +9,17 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
+	"github.com/IvanSaratov/go-metrics-practice/internal/model"
 	"github.com/IvanSaratov/go-metrics-practice/internal/repository"
 )
 
 func BenchmarkServer(b *testing.B) {
-	metrics := make([]models.Metrics, 0, 100)
+	metrics := make([]model.Metrics, 0, 100)
 	for i := range 50 {
 		value, delta := 20+float64(i)/10, int64(1)
 		metrics = append(metrics,
-			models.Metrics{ID: fmt.Sprintf("temperature_%d", i), MType: models.Gauge, Value: &value},
-			models.Metrics{ID: fmt.Sprintf("requests_%d", i), MType: models.Counter, Delta: &delta},
+			model.Metrics{ID: fmt.Sprintf("temperature_%d", i), MType: model.Gauge, Value: &value},
+			model.Metrics{ID: fmt.Sprintf("requests_%d", i), MType: model.Counter, Delta: &delta},
 		)
 	}
 	body, err := json.Marshal(metrics)

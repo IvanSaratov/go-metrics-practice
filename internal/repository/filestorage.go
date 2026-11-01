@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
+	"github.com/IvanSaratov/go-metrics-practice/internal/model"
 )
 
 // FileStorage хранит метрики в памяти и сохраняет их в JSON-файл.
@@ -76,9 +76,9 @@ func (s *FileStorage) AddCounter(
 
 // UpdateBatch проверяет пакет и обновляет метрики.
 // В синхронном режиме файл сохраняется один раз для всего пакета.
-func (s *FileStorage) UpdateBatch(_ context.Context, metrics []models.Metrics) error {
+func (s *FileStorage) UpdateBatch(_ context.Context, metrics []model.Metrics) error {
 	// Общий метод валидации интерфейса
-	if err := models.ValidateUpdates(metrics); err != nil {
+	if err := model.ValidateUpdates(metrics); err != nil {
 		return err
 	}
 	if len(metrics) == 0 {
@@ -174,11 +174,11 @@ func (s *FileStorage) loadSnapshot() (metricsSnapshot, error) {
 		return metricsSnapshot{}, fmt.Errorf("read metrics file: %w", err)
 	}
 
-	var metrics []models.Metrics
+	var metrics []model.Metrics
 	if err := json.Unmarshal(data, &metrics); err != nil {
 		return metricsSnapshot{}, fmt.Errorf("decode metrics: %w", err)
 	}
-	if err := models.ValidateUpdates(metrics); err != nil {
+	if err := model.ValidateUpdates(metrics); err != nil {
 		return metricsSnapshot{}, fmt.Errorf("decode metrics: %w", err)
 	}
 
@@ -188,9 +188,9 @@ func (s *FileStorage) loadSnapshot() (metricsSnapshot, error) {
 	}
 	for _, metric := range metrics {
 		switch metric.MType {
-		case models.Gauge:
+		case model.Gauge:
 			snapshot.gauges[metric.ID] = *metric.Value
-		case models.Counter:
+		case model.Counter:
 			snapshot.counters[metric.ID] = *metric.Delta
 		}
 	}
@@ -198,22 +198,22 @@ func (s *FileStorage) loadSnapshot() (metricsSnapshot, error) {
 	return snapshot, nil
 }
 
-func (s metricsSnapshot) metrics() []models.Metrics {
-	metrics := make([]models.Metrics, 0, len(s.gauges)+len(s.counters))
+func (s metricsSnapshot) metrics() []model.Metrics {
+	metrics := make([]model.Metrics, 0, len(s.gauges)+len(s.counters))
 
 	for name, value := range s.gauges {
 		value := value
-		metrics = append(metrics, models.Metrics{
+		metrics = append(metrics, model.Metrics{
 			ID:    name,
-			MType: models.Gauge,
+			MType: model.Gauge,
 			Value: &value,
 		})
 	}
 	for name, value := range s.counters {
 		value := value
-		metrics = append(metrics, models.Metrics{
+		metrics = append(metrics, model.Metrics{
 			ID:    name,
-			MType: models.Counter,
+			MType: model.Counter,
 			Delta: &value,
 		})
 	}

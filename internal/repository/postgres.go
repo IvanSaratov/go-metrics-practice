@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
+	"github.com/IvanSaratov/go-metrics-practice/internal/model"
 	retryhelper "github.com/IvanSaratov/go-metrics-practice/internal/retry"
 	"github.com/jackc/pgerrcode"
 	"github.com/lib/pq"
@@ -79,9 +79,9 @@ func (s *PostgresStorage) AddCounter(ctx context.Context, name string, value int
 }
 
 // UpdateBatch проверяет метрики и сохраняет весь пакет в одной транзакции.
-func (s *PostgresStorage) UpdateBatch(ctx context.Context, metrics []models.Metrics) error {
+func (s *PostgresStorage) UpdateBatch(ctx context.Context, metrics []model.Metrics) error {
 	// Ссылаемся на общий метод
-	if err := models.ValidateUpdates(metrics); err != nil {
+	if err := model.ValidateUpdates(metrics); err != nil {
 		return err
 	}
 	if len(metrics) == 0 {
@@ -93,7 +93,7 @@ func (s *PostgresStorage) UpdateBatch(ctx context.Context, metrics []models.Metr
 	})
 }
 
-func (s *PostgresStorage) updateBatch(ctx context.Context, metrics []models.Metrics) error {
+func (s *PostgresStorage) updateBatch(ctx context.Context, metrics []model.Metrics) error {
 	// Начинаем нашу транзакцию
 	transaction, err := s.database.BeginTx(ctx, nil)
 	if err != nil {
@@ -110,11 +110,11 @@ func (s *PostgresStorage) updateBatch(ctx context.Context, metrics []models.Metr
 
 	for _, metric := range metrics {
 		switch metric.MType {
-		case models.Gauge:
+		case model.Gauge:
 			if _, err := transaction.ExecContext(ctx, setGaugeQuery, metric.ID, *metric.Value); err != nil {
 				return rollback(fmt.Errorf("update gauge %q: %w", metric.ID, err))
 			}
-		case models.Counter:
+		case model.Counter:
 			if _, err := transaction.ExecContext(
 				ctx,
 				addCounterBatchQuery,

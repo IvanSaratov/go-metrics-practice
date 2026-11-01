@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	handlermiddleware "github.com/IvanSaratov/go-metrics-practice/internal/handler/middleware"
-	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
+	"github.com/IvanSaratov/go-metrics-practice/internal/model"
 	"github.com/IvanSaratov/go-metrics-practice/internal/repository"
 	"github.com/stretchr/testify/require"
 )
@@ -38,7 +38,7 @@ func TestUpdatesJSONStoresBatch(t *testing.T) {
 	require.True(t, found)
 	require.Equal(t, int64(15), counter)
 
-	var metrics []models.Metrics
+	var metrics []model.Metrics
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &metrics))
 	require.Len(t, metrics, 3)
 }

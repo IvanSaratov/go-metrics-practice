@@ -5,11 +5,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
+	"github.com/IvanSaratov/go-metrics-practice/internal/model"
 )
 
 func BenchmarkFileStorage(b *testing.B) {
-	metrics := make([]models.Metrics, 0, 100)
+	metrics := make([]model.Metrics, 0, 100)
 	for i := range 50 {
 		metrics = append(metrics,
 			gaugeMetric(fmt.Sprintf("temperature_%d", i), 20+float64(i)/10),

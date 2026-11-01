@@ -7,11 +7,24 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/IvanSaratov/go-metrics-practice/internal/buildinfo"
 	applogger "github.com/IvanSaratov/go-metrics-practice/internal/logger"
 	"go.uber.org/zap"
 )
 
+var (
+	buildVersion string
+	buildDate    string
+	buildCommit  string
+)
+
 func main() {
+	buildinfo.Print(os.Stdout, buildVersion, buildDate, buildCommit)
+
+	runMain()
+}
+
+func runMain() {
 	appLogger, err := applogger.New(false)
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "create logger: %v\n", err)

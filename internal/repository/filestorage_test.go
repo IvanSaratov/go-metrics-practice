@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
+	"github.com/IvanSaratov/go-metrics-practice/internal/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -96,7 +96,7 @@ func TestFileStorageUpdateBatchSavesConsistentSnapshot(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "metrics-db.json")
 	storage := NewFileStorage(path, true)
 
-	err := storage.UpdateBatch(testContext, []models.Metrics{
+	err := storage.UpdateBatch(testContext, []model.Metrics{
 		gaugeMetric("temperature", 23.5),
 		counterMetric("requests", 10),
 		counterMetric("requests", 5),
@@ -120,7 +120,7 @@ func TestFileStorageFailedBatchSaveKeepsPreviousState(t *testing.T) {
 	require.NoError(t, os.WriteFile(blockedParent, []byte("file"), 0o600))
 	storage := NewFileStorage(filepath.Join(blockedParent, "metrics-db.json"), true)
 
-	err := storage.UpdateBatch(testContext, []models.Metrics{
+	err := storage.UpdateBatch(testContext, []model.Metrics{
 		gaugeMetric("temperature", 23.5),
 		counterMetric("requests", 10),
 	})

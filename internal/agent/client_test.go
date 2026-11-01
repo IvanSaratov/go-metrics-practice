@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
+	"github.com/IvanSaratov/go-metrics-practice/internal/model"
 	retrylib "github.com/sethvargo/go-retry"
 	"github.com/stretchr/testify/require"
 )
@@ -31,7 +31,7 @@ func TestClientSendGauge(t *testing.T) {
 	var contentType string
 	var contentEncoding string
 	var acceptEncoding string
-	var metric models.Metrics
+	var metric model.Metrics
 	var decodeErr error
 	var responseErr error
 
@@ -63,7 +63,7 @@ func TestClientSendGauge(t *testing.T) {
 	require.Equal(t, "gzip", contentEncoding)
 	require.Equal(t, "gzip", acceptEncoding)
 	require.Equal(t, "TestGauge", metric.ID)
-	require.Equal(t, models.Gauge, metric.MType)
+	require.Equal(t, model.Gauge, metric.MType)
 	require.NotNil(t, metric.Value)
 	require.Equal(t, 67.1, *metric.Value)
 	require.Nil(t, metric.Delta)
@@ -75,7 +75,7 @@ func TestClientSendCounter(t *testing.T) {
 	var contentType string
 	var contentEncoding string
 	var acceptEncoding string
-	var metric models.Metrics
+	var metric model.Metrics
 	var decodeErr error
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -104,7 +104,7 @@ func TestClientSendCounter(t *testing.T) {
 	require.Equal(t, "gzip", contentEncoding)
 	require.Equal(t, "gzip", acceptEncoding)
 	require.Equal(t, "TestCounter", metric.ID)
-	require.Equal(t, models.Counter, metric.MType)
+	require.Equal(t, model.Counter, metric.MType)
 	require.NotNil(t, metric.Delta)
 	require.Equal(t, int64(10), *metric.Delta)
 	require.Nil(t, metric.Value)
@@ -113,9 +113,9 @@ func TestClientSendCounter(t *testing.T) {
 func TestClientSendBatch(t *testing.T) {
 	gaugeValue := 67.1
 	counterDelta := int64(10)
-	want := []models.Metrics{
-		{ID: "TestGauge", MType: models.Gauge, Value: &gaugeValue},
-		{ID: "TestCounter", MType: models.Counter, Delta: &counterDelta},
+	want := []model.Metrics{
+		{ID: "TestGauge", MType: model.Gauge, Value: &gaugeValue},
+		{ID: "TestCounter", MType: model.Counter, Delta: &counterDelta},
 	}
 
 	var requestMethod string
@@ -123,7 +123,7 @@ func TestClientSendBatch(t *testing.T) {
 	var contentType string
 	var contentEncoding string
 	var acceptEncoding string
-	var metrics []models.Metrics
+	var metrics []model.Metrics
 	var decodeErr error
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -203,8 +203,8 @@ func TestClientOmitsSignatureWithoutKey(t *testing.T) {
 
 func TestClientRetriesTransportErrors(t *testing.T) {
 	gaugeValue := 67.1
-	want := []models.Metrics{
-		{ID: "TestGauge", MType: models.Gauge, Value: &gaugeValue},
+	want := []model.Metrics{
+		{ID: "TestGauge", MType: model.Gauge, Value: &gaugeValue},
 	}
 	httpClient := &flakyHTTPClient{
 		failures: 3,
@@ -242,8 +242,8 @@ func TestClientStopsRetryWhenContextCanceled(t *testing.T) {
 	}
 	client := NewClient("http://localhost", httpClient, "")
 
-	err := client.SendBatch(ctx, []models.Metrics{
-		{ID: "TestGauge", MType: models.Gauge, Value: &gaugeValue},
+	err := client.SendBatch(ctx, []model.Metrics{
+		{ID: "TestGauge", MType: model.Gauge, Value: &gaugeValue},
 	})
 
 	require.ErrorIs(t, err, context.Canceled)
@@ -259,8 +259,8 @@ func TestClientDoesNotRetryOtherErrors(t *testing.T) {
 	client := NewClient("http://localhost", httpClient, "")
 	client.retry = retryWithoutDelay
 
-	err := client.SendBatch(context.Background(), []models.Metrics{
-		{ID: "TestGauge", MType: models.Gauge, Value: &gaugeValue},
+	err := client.SendBatch(context.Background(), []model.Metrics{
+		{ID: "TestGauge", MType: model.Gauge, Value: &gaugeValue},
 	})
 
 	require.Error(t, err)
@@ -318,9 +318,9 @@ func TestClientRejectsInvalidGzipResponse(t *testing.T) {
 
 func TestClientRejectsCorruptedGzipResponse(t *testing.T) {
 	var compressed bytes.Buffer
-	require.NoError(t, writeGzipMetric(&compressed, models.Metrics{
+	require.NoError(t, writeGzipMetric(&compressed, model.Metrics{
 		ID:    "TestGauge",
-		MType: models.Gauge,
+		MType: model.Gauge,
 	}))
 	body := compressed.Bytes()
 	body[len(body)-1] ^= 0xff
@@ -344,9 +344,9 @@ func TestClientRejectsCorruptedGzipResponse(t *testing.T) {
 func TestEncodeGzipJSON(t *testing.T) {
 	value := 67.1
 	delta := int64(10)
-	metrics := []models.Metrics{
-		{ID: "TestGauge", MType: models.Gauge, Value: &value},
-		{ID: "TestCounter", MType: models.Counter, Delta: &delta},
+	metrics := []model.Metrics{
+		{ID: "TestGauge", MType: model.Gauge, Value: &value},
+		{ID: "TestCounter", MType: model.Counter, Delta: &delta},
 	}
 
 	t.Run("Repeated", func(t *testing.T) {
@@ -383,9 +383,9 @@ func TestEncodeGzipJSON(t *testing.T) {
 				t.Parallel()
 				for j := range 10 {
 					delta := int64(i*10 + j)
-					want := models.Metrics{
+					want := model.Metrics{
 						ID:    fmt.Sprintf("counter_%d", i),
-						MType: models.Counter,
+						MType: model.Counter,
 						Delta: &delta,
 					}
 					body, err := encodeGzipJSON(want)
@@ -399,31 +399,31 @@ func TestEncodeGzipJSON(t *testing.T) {
 	})
 }
 
-func decodeGzipMetric(body io.Reader) (models.Metrics, error) {
+func decodeGzipMetric(body io.Reader) (model.Metrics, error) {
 	reader, err := gzip.NewReader(body)
 	if err != nil {
-		return models.Metrics{}, err
+		return model.Metrics{}, err
 	}
 
-	var metric models.Metrics
+	var metric model.Metrics
 	decodeErr := json.NewDecoder(reader).Decode(&metric)
 	_, readErr := io.Copy(io.Discard, reader)
 	return metric, errors.Join(decodeErr, readErr, reader.Close())
 }
 
-func decodeGzipMetrics(body io.Reader) ([]models.Metrics, error) {
+func decodeGzipMetrics(body io.Reader) ([]model.Metrics, error) {
 	reader, err := gzip.NewReader(body)
 	if err != nil {
 		return nil, err
 	}
 
-	var metrics []models.Metrics
+	var metrics []model.Metrics
 	decodeErr := json.NewDecoder(reader).Decode(&metrics)
 	_, readErr := io.Copy(io.Discard, reader)
 	return metrics, errors.Join(decodeErr, readErr, reader.Close())
 }
 
-func writeGzipMetric(w io.Writer, metric models.Metrics) error {
+func writeGzipMetric(w io.Writer, metric model.Metrics) error {
 	writer := gzip.NewWriter(w)
 	encodeErr := json.NewEncoder(writer).Encode(metric)
 	return errors.Join(encodeErr, writer.Close())
@@ -440,7 +440,7 @@ func compressionDisabledClient() *http.Client {
 type flakyHTTPClient struct {
 	failures   int
 	failureErr error
-	received   [][]models.Metrics
+	received   [][]model.Metrics
 	onRequest  func()
 }
 

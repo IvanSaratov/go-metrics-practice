@@ -1,4 +1,4 @@
-package models
+package model
 
 import (
 	"testing"
@@ -87,4 +87,35 @@ func TestValidateUpdatesChecksEveryMetric(t *testing.T) {
 
 func TestValidateUpdatesAcceptsEmptyBatch(t *testing.T) {
 	require.NoError(t, ValidateUpdates(nil))
+}
+
+func TestMetricsReset(t *testing.T) {
+	delta := int64(10)
+	value := 23.5
+	metric := Metrics{
+		ID: "metric", MType: Gauge, Hash: "hash",
+		Delta: &delta, Value: &value,
+	}
+	resetter, ok := any(&metric).(interface{ Reset() })
+	require.True(t, ok, "у Metrics должен быть метод Reset")
+	resetter.Reset()
+
+	require.Empty(t, metric.ID)
+	require.Empty(t, metric.MType)
+	require.Empty(t, metric.Hash)
+	require.Same(t, &delta, metric.Delta)
+	require.Same(t, &value, metric.Value)
+	require.Zero(t, delta)
+	require.Zero(t, value)
+}
+
+func TestMetricsResetNil(t *testing.T) {
+	for _, metric := range []*Metrics{nil, {}} {
+		resetter, ok := any(metric).(interface{ Reset() })
+		require.True(t, ok, "у Metrics должен быть метод Reset")
+		require.NotPanics(t, resetter.Reset)
+		if metric != nil {
+			require.Equal(t, Metrics{}, *metric)
+		}
+	}
 }

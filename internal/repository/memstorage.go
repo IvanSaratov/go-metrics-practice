@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
+	"github.com/IvanSaratov/go-metrics-practice/internal/model"
 )
 
 type metricsSnapshot struct {
@@ -49,9 +49,9 @@ func (m *MemStorage) AddCounter(_ context.Context, name string, value int64) (in
 
 // UpdateBatch проверяет пакет и обновляет все метрики под одной блокировкой.
 // Если в пакете есть ошибка, данные не меняются.
-func (m *MemStorage) UpdateBatch(_ context.Context, metrics []models.Metrics) error {
+func (m *MemStorage) UpdateBatch(_ context.Context, metrics []model.Metrics) error {
 	// Общеинтерфейсный метод
-	if err := models.ValidateUpdates(metrics); err != nil {
+	if err := model.ValidateUpdates(metrics); err != nil {
 		return err
 	}
 	if len(metrics) == 0 {
