@@ -33,11 +33,22 @@ type agentConfig struct {
 
 func main() {
 	buildinfo.Print(os.Stdout, buildVersion, buildDate, buildCommit)
+	runMain()
+}
 
+// Анализатор запрещает os.Exit в main, поэтому выходим здесь.
+// Сначала run завершится и выполнит свои defer, затем вызовется os.Exit.
+func runMain() {
+	os.Exit(run(os.Args))
+}
+
+func run(args []string) int {
 	app := newAgentApp(runAgent)
-	if err := app.Run(os.Args); err != nil {
-		log.Fatal(err)
+	if err := app.Run(args); err != nil {
+		log.Error(err)
+		return 1
 	}
+	return 0
 }
 
 func newAgentApp(run func(config agentConfig) error) *cli.App {
