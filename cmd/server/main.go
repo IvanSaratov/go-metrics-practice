@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/IvanSaratov/go-metrics-practice/internal/buildinfo"
 	applogger "github.com/IvanSaratov/go-metrics-practice/internal/logger"
 	"go.uber.org/zap"
 )
@@ -18,19 +19,7 @@ var (
 )
 
 func main() {
-	// Если данные сборки не передали, выводим N/A.
-	if buildVersion == "" {
-		buildVersion = "N/A"
-	}
-	if buildDate == "" {
-		buildDate = "N/A"
-	}
-	if buildCommit == "" {
-		buildCommit = "N/A"
-	}
-	fmt.Printf("Build version: %s\n", buildVersion)
-	fmt.Printf("Build date: %s\n", buildDate)
-	fmt.Printf("Build commit: %s\n", buildCommit)
+	buildinfo.Print(os.Stdout, buildVersion, buildDate, buildCommit)
 
 	runMain()
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/IvanSaratov/go-metrics-practice/internal/agent"
+	"github.com/IvanSaratov/go-metrics-practice/internal/buildinfo"
 	"github.com/IvanSaratov/go-metrics-practice/internal/cliflags"
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
@@ -31,19 +32,7 @@ type agentConfig struct {
 }
 
 func main() {
-	// Если данные сборки не передали, выводим N/A.
-	if buildVersion == "" {
-		buildVersion = "N/A"
-	}
-	if buildDate == "" {
-		buildDate = "N/A"
-	}
-	if buildCommit == "" {
-		buildCommit = "N/A"
-	}
-	fmt.Printf("Build version: %s\n", buildVersion)
-	fmt.Printf("Build date: %s\n", buildDate)
-	fmt.Printf("Build commit: %s\n", buildCommit)
+	buildinfo.Print(os.Stdout, buildVersion, buildDate, buildCommit)
 
 	app := newAgentApp(runAgent)
 	if err := app.Run(os.Args); err != nil {
