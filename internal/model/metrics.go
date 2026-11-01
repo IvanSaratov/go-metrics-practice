@@ -1,5 +1,5 @@
-// Package models содержит структуру метрики и функции её проверки.
-package models
+// Package model содержит структуру метрики и функции её проверки.
+package model
 
 import "fmt"
 

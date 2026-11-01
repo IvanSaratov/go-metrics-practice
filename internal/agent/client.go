@@ -14,7 +14,7 @@ import (
 	"strings"
 	"sync"
 
-	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
+	"github.com/IvanSaratov/go-metrics-practice/internal/model"
 	retryhelper "github.com/IvanSaratov/go-metrics-practice/internal/retry"
 	"github.com/IvanSaratov/go-metrics-practice/internal/signature"
 )
@@ -63,25 +63,25 @@ func NewClient(baseURL string, httpClient HTTPClient, key string) *Client {
 
 // SendGauge отправляет новое значение gauge через POST /update.
 func (c *Client) SendGauge(name string, value float64) error {
-	return c.sendMetric(context.Background(), models.Metrics{
+	return c.sendMetric(context.Background(), model.Metrics{
 		ID:    name,
-		MType: models.Gauge,
+		MType: model.Gauge,
 		Value: &value,
 	})
 }
 
 // SendCounter отправляет прибавку к счётчику через POST /update.
 func (c *Client) SendCounter(name string, value int64) error {
-	return c.sendMetric(context.Background(), models.Metrics{
+	return c.sendMetric(context.Background(), model.Metrics{
 		ID:    name,
-		MType: models.Counter,
+		MType: model.Counter,
 		Delta: &value,
 	})
 }
 
 // SendBatch отправляет пакет метрик через POST /updates/.
 // Если пакет пустой, возвращает nil без отправки запроса.
-func (c *Client) SendBatch(ctx context.Context, metrics []models.Metrics) error {
+func (c *Client) SendBatch(ctx context.Context, metrics []model.Metrics) error {
 	if len(metrics) == 0 {
 		return nil
 	}
@@ -89,7 +89,7 @@ func (c *Client) SendBatch(ctx context.Context, metrics []models.Metrics) error 
 	return c.send(ctx, "/updates/", metrics)
 }
 
-func (c *Client) sendMetric(ctx context.Context, metric models.Metrics) error {
+func (c *Client) sendMetric(ctx context.Context, metric model.Metrics) error {
 	return c.send(ctx, "/update", metric)
 }
 

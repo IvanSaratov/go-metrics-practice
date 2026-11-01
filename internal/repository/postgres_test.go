@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
+	"github.com/IvanSaratov/go-metrics-practice/internal/model"
 	"github.com/lib/pq"
 	retrylib "github.com/sethvargo/go-retry"
 	"github.com/stretchr/testify/require"
@@ -125,7 +125,7 @@ func TestPostgresStorageUpdateBatchCommitsAllMetrics(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	err := storage.UpdateBatch(context.Background(), []models.Metrics{
+	err := storage.UpdateBatch(context.Background(), []model.Metrics{
 		gaugeMetric("temperature", 23.5),
 		counterMetric("requests", 10),
 		counterMetric("requests", 5),
@@ -145,7 +145,7 @@ func TestPostgresStorageUpdateBatchRollsBackOnMetricError(t *testing.T) {
 		WillReturnError(errors.New("database is unavailable"))
 	mock.ExpectRollback()
 
-	err := storage.UpdateBatch(context.Background(), []models.Metrics{
+	err := storage.UpdateBatch(context.Background(), []model.Metrics{
 		gaugeMetric("temperature", 23.5),
 		counterMetric("requests", 10),
 	})
@@ -169,7 +169,7 @@ func TestPostgresStorageUpdateBatchRetriesWholeTransaction(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	err := storage.UpdateBatch(context.Background(), []models.Metrics{
+	err := storage.UpdateBatch(context.Background(), []model.Metrics{
 		gaugeMetric("temperature", 23.5),
 	})
 
@@ -179,7 +179,7 @@ func TestPostgresStorageUpdateBatchRetriesWholeTransaction(t *testing.T) {
 func TestPostgresStorageUpdateBatchRejectsInvalidMetricBeforeTransaction(t *testing.T) {
 	storage, _ := newPostgresStorageMock(t)
 
-	err := storage.UpdateBatch(context.Background(), []models.Metrics{
+	err := storage.UpdateBatch(context.Background(), []model.Metrics{
 		gaugeMetric("temperature", 23.5),
 		{ID: "broken", MType: "unknown"},
 	})

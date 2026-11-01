@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/IvanSaratov/go-metrics-practice/internal/audit"
-	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
+	"github.com/IvanSaratov/go-metrics-practice/internal/model"
 	"github.com/IvanSaratov/go-metrics-practice/internal/repository"
 	"github.com/go-chi/chi/v5"
 )
@@ -88,7 +88,7 @@ func (h *UpdateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // ServeJSON сохраняет метрику из JSON в запросе POST /update.
 // В ответе возвращает метрику с новым значением, для counter — накопленную сумму.
 func (h *UpdateHandler) ServeJSON(w http.ResponseWriter, r *http.Request) {
-	var metric models.Metrics
+	var metric model.Metrics
 	if requestError := decodeJSON(w, r, &metric); requestError != nil {
 		writeJSONError(w, requestError.status, requestError.message)
 		return
@@ -99,12 +99,12 @@ func (h *UpdateHandler) ServeJSON(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch metric.MType {
-	case models.Gauge:
+	case model.Gauge:
 		if err := h.storage.SetGauge(r.Context(), metric.ID, *metric.Value); err != nil {
 			writeJSONError(w, http.StatusInternalServerError, "failed to store metric")
 			return
 		}
-	case models.Counter:
+	case model.Counter:
 		// В ответе возвращаем уже накопленное значение counter
 		total, err := h.storage.AddCounter(r.Context(), metric.ID, *metric.Delta)
 		if err != nil {
@@ -121,7 +121,7 @@ func (h *UpdateHandler) ServeJSON(w http.ResponseWriter, r *http.Request) {
 // ServeBatch сохраняет JSON-массив метрик из запроса POST /updates.
 // В ответе возвращает принятый пакет. Пустой массив допустим.
 func (h *UpdateHandler) ServeBatch(w http.ResponseWriter, r *http.Request) {
-	var metrics []models.Metrics
+	var metrics []model.Metrics
 	if requestError := decodeJSON(w, r, &metrics); requestError != nil {
 		writeJSONError(w, requestError.status, requestError.message)
 		return
@@ -131,7 +131,7 @@ func (h *UpdateHandler) ServeBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := models.ValidateUpdates(metrics); err != nil {
+	if err := model.ValidateUpdates(metrics); err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}

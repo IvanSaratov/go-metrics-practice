@@ -3,7 +3,7 @@ package agent
 import (
 	"testing"
 
-	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
+	"github.com/IvanSaratov/go-metrics-practice/internal/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -55,9 +55,9 @@ func TestMetricsSnapshotBuildsBatch(t *testing.T) {
 
 	gaugeValue := 67.1
 	counterDelta := int64(10)
-	require.ElementsMatch(t, []models.Metrics{
-		{ID: "TestGauge", MType: models.Gauge, Value: &gaugeValue},
-		{ID: "TestCounter", MType: models.Counter, Delta: &counterDelta},
+	require.ElementsMatch(t, []model.Metrics{
+		{ID: "TestGauge", MType: model.Gauge, Value: &gaugeValue},
+		{ID: "TestCounter", MType: model.Counter, Delta: &counterDelta},
 	}, snapshot)
 }
 

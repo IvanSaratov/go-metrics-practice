@@ -5,18 +5,18 @@ import (
 	"sync"
 	"testing"
 
-	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
+	"github.com/IvanSaratov/go-metrics-practice/internal/model"
 	"github.com/stretchr/testify/require"
 )
 
 var testContext = context.Background()
 
-func gaugeMetric(name string, value float64) models.Metrics {
-	return models.Metrics{ID: name, MType: models.Gauge, Value: &value}
+func gaugeMetric(name string, value float64) model.Metrics {
+	return model.Metrics{ID: name, MType: model.Gauge, Value: &value}
 }
 
-func counterMetric(name string, value int64) models.Metrics {
-	return models.Metrics{ID: name, MType: models.Counter, Delta: &value}
+func counterMetric(name string, value int64) model.Metrics {
+	return model.Metrics{ID: name, MType: model.Counter, Delta: &value}
 }
 
 func TestMemStorageSetGauge(t *testing.T) {
@@ -140,7 +140,7 @@ func TestMemStorageGetCounterNotFound(t *testing.T) {
 func TestMemStorageUpdateBatch(t *testing.T) {
 	storage := NewMemStorage()
 
-	err := storage.UpdateBatch(testContext, []models.Metrics{
+	err := storage.UpdateBatch(testContext, []model.Metrics{
 		gaugeMetric("temperature", 23.5),
 		counterMetric("requests", 10),
 		counterMetric("requests", 5),
@@ -160,7 +160,7 @@ func TestMemStorageUpdateBatch(t *testing.T) {
 func TestMemStorageUpdateBatchRejectsInvalidMetricWithoutChanges(t *testing.T) {
 	storage := NewMemStorage()
 
-	err := storage.UpdateBatch(testContext, []models.Metrics{
+	err := storage.UpdateBatch(testContext, []model.Metrics{
 		gaugeMetric("temperature", 23.5),
 		{ID: "broken", MType: "unknown"},
 	})
@@ -181,7 +181,7 @@ func TestMemStorageUpdateBatchConcurrentCounters(t *testing.T) {
 	for range workers {
 		go func() {
 			defer wg.Done()
-			errs <- storage.UpdateBatch(testContext, []models.Metrics{
+			errs <- storage.UpdateBatch(testContext, []model.Metrics{
 				counterMetric("requests", 1),
 			})
 		}()

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
+	"github.com/IvanSaratov/go-metrics-practice/internal/model"
 	"github.com/IvanSaratov/go-metrics-practice/internal/repository"
 	"github.com/stretchr/testify/require"
 )
@@ -37,7 +37,7 @@ func TestUpdateJSONGauge(t *testing.T) {
 
 	metric := decodeMetricResponse(t, response)
 	require.Equal(t, "TestGauge", metric.ID)
-	require.Equal(t, models.Gauge, metric.MType)
+	require.Equal(t, model.Gauge, metric.MType)
 	require.NotNil(t, metric.Value)
 	require.Equal(t, 67.1, *metric.Value)
 	require.Nil(t, metric.Delta)
@@ -67,7 +67,7 @@ func TestUpdateJSONCounterReturnsAccumulatedValue(t *testing.T) {
 
 	metric := decodeMetricResponse(t, response)
 	require.Equal(t, "TestCounter", metric.ID)
-	require.Equal(t, models.Counter, metric.MType)
+	require.Equal(t, model.Counter, metric.MType)
 	require.NotNil(t, metric.Delta)
 	require.Equal(t, int64(10), *metric.Delta)
 	require.Nil(t, metric.Value)
@@ -92,7 +92,7 @@ func TestValueJSONGauge(t *testing.T) {
 
 	metric := decodeMetricResponse(t, response)
 	require.Equal(t, "TestGauge", metric.ID)
-	require.Equal(t, models.Gauge, metric.MType)
+	require.Equal(t, model.Gauge, metric.MType)
 	require.NotNil(t, metric.Value)
 	require.Equal(t, 67.1, *metric.Value)
 	require.Nil(t, metric.Delta)
@@ -118,7 +118,7 @@ func TestValueJSONCounter(t *testing.T) {
 
 	metric := decodeMetricResponse(t, response)
 	require.Equal(t, "TestCounter", metric.ID)
-	require.Equal(t, models.Counter, metric.MType)
+	require.Equal(t, model.Counter, metric.MType)
 	require.NotNil(t, metric.Delta)
 	require.Equal(t, int64(10), *metric.Delta)
 	require.Nil(t, metric.Value)
@@ -147,7 +147,7 @@ func TestUpdateJSONAcceptsTrailingSlash(t *testing.T) {
 
 	metric := decodeMetricResponse(t, response)
 	require.Equal(t, "TestGauge", metric.ID)
-	require.Equal(t, models.Gauge, metric.MType)
+	require.Equal(t, model.Gauge, metric.MType)
 	require.NotNil(t, metric.Value)
 	require.Equal(t, 67.1, *metric.Value)
 	require.Nil(t, metric.Delta)
@@ -172,7 +172,7 @@ func TestValueJSONAcceptsTrailingSlash(t *testing.T) {
 
 	metric := decodeMetricResponse(t, response)
 	require.Equal(t, "TestGauge", metric.ID)
-	require.Equal(t, models.Gauge, metric.MType)
+	require.Equal(t, model.Gauge, metric.MType)
 	require.NotNil(t, metric.Value)
 	require.Equal(t, 67.1, *metric.Value)
 	require.Nil(t, metric.Delta)
@@ -305,7 +305,7 @@ func TestValueJSONReadsGaugeStoredThroughLegacyEndpoint(t *testing.T) {
 
 	metric := decodeMetricResponse(t, valueResponse)
 	require.Equal(t, "TestGauge", metric.ID)
-	require.Equal(t, models.Gauge, metric.MType)
+	require.Equal(t, model.Gauge, metric.MType)
 	require.NotNil(t, metric.Value)
 	require.Equal(t, 67.1, *metric.Value)
 	require.Nil(t, metric.Delta)
@@ -337,10 +337,10 @@ func TestUpdateJSONPreservesZeroValues(t *testing.T) {
 			require.Equal(t, http.StatusOK, response.Code)
 			metric := decodeMetricResponse(t, response)
 			switch metric.MType {
-			case models.Gauge:
+			case model.Gauge:
 				require.NotNil(t, metric.Value)
 				require.Zero(t, *metric.Value)
-			case models.Counter:
+			case model.Counter:
 				require.NotNil(t, metric.Delta)
 				require.Zero(t, *metric.Delta)
 			}
@@ -436,10 +436,10 @@ func newJSONRequest(t *testing.T, method string, target string, body string) *ht
 	return request
 }
 
-func decodeMetricResponse(t *testing.T, response *httptest.ResponseRecorder) models.Metrics {
+func decodeMetricResponse(t *testing.T, response *httptest.ResponseRecorder) model.Metrics {
 	t.Helper()
 
-	var metric models.Metrics
+	var metric model.Metrics
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &metric))
 	return metric
 }

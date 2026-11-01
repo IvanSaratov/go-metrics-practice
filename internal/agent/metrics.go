@@ -6,7 +6,7 @@ import (
 	"runtime"
 	"sync"
 
-	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
+	"github.com/IvanSaratov/go-metrics-practice/internal/model"
 )
 
 // Metrics хранит собранные метрики. Можно использовать из нескольких горутин.
@@ -119,24 +119,24 @@ func (m *Metrics) updateSystemMetrics(values systemMetrics) {
 	}
 }
 
-func (m *Metrics) snapshot() []models.Metrics {
+func (m *Metrics) snapshot() []model.Metrics {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	metrics := make([]models.Metrics, 0, len(m.gauges)+len(m.counters))
+	metrics := make([]model.Metrics, 0, len(m.gauges)+len(m.counters))
 
 	for name, value := range m.gauges {
-		metrics = append(metrics, models.Metrics{
+		metrics = append(metrics, model.Metrics{
 			ID:    name,
-			MType: models.Gauge,
+			MType: model.Gauge,
 			Value: &value,
 		})
 	}
 
 	for name, value := range m.counters {
-		metrics = append(metrics, models.Metrics{
+		metrics = append(metrics, model.Metrics{
 			ID:    name,
-			MType: models.Counter,
+			MType: model.Counter,
 			Delta: &value,
 		})
 	}

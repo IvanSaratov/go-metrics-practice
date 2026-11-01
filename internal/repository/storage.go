@@ -4,7 +4,7 @@ package repository
 import (
 	"context"
 
-	models "github.com/IvanSaratov/go-metrics-practice/internal/model"
+	"github.com/IvanSaratov/go-metrics-practice/internal/model"
 )
 
 // Storage — общий интерфейс для хранилищ метрик.
@@ -16,7 +16,7 @@ type Storage interface {
 	AddCounter(ctx context.Context, name string, value int64) (int64, error)
 	// UpdateBatch сначала проверяет весь пакет, затем обновляет метрики.
 	// Пустой пакет ничего не меняет.
-	UpdateBatch(ctx context.Context, metrics []models.Metrics) error
+	UpdateBatch(ctx context.Context, metrics []model.Metrics) error
 	// GetGauge возвращает значение gauge и сообщает, найдена ли метрика.
 	// Если метрики нет, ошибки не будет.
 	GetGauge(ctx context.Context, name string) (float64, bool, error)
@@ -30,12 +30,12 @@ type Storage interface {
 }
 
 // Добавляем общую функцию интерфейса валидации батчей
-func applyBatch(snapshot metricsSnapshot, metrics []models.Metrics) {
+func applyBatch(snapshot metricsSnapshot, metrics []model.Metrics) {
 	for _, metric := range metrics {
 		switch metric.MType {
-		case models.Gauge:
+		case model.Gauge:
 			snapshot.gauges[metric.ID] = *metric.Value
-		case models.Counter:
+		case model.Counter:
 			snapshot.counters[metric.ID] += *metric.Delta
 		}
 	}

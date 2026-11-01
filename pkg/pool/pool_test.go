@@ -85,13 +85,13 @@ func TestPoolConcurrent(t *testing.T) {
 }
 
 func TestPoolWithMetrics(t *testing.T) {
-	p := pool.New(func() *models.Metrics {
-		return &models.Metrics{Delta: new(int64), Value: new(float64)}
+	p := pool.New(func() *model.Metrics {
+		return &model.Metrics{Delta: new(int64), Value: new(float64)}
 	})
 	metric := p.Get()
 	delta, value := metric.Delta, metric.Value
 	metric.ID = "metric"
-	metric.MType = models.Gauge
+	metric.MType = model.Gauge
 	metric.Hash = "hash"
 	*delta = 10
 	*value = 23.5
