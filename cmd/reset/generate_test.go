@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,8 +18,11 @@ import (
 func TestGenerateProducesWorkingMethods(t *testing.T) {
 	root := copyFixture(t)
 	require.NoError(t, generate(root))
-	require.FileExists(t, filepath.Join(root, "reset.gen.go"))
-	require.FileExists(t, filepath.Join(root, "child", "reset.gen.go"))
+	for _, path := range []string{filepath.Join(root, "reset.gen.go"), filepath.Join(root, "child", "reset.gen.go")} {
+		file, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ParseComments)
+		require.NoError(t, err)
+		require.True(t, ast.IsGenerated(file), "Go должен распознавать сгенерированный файл: %s", path)
+	}
 
 	runModuleTests(t, root)
 }
