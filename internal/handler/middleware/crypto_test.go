@@ -140,6 +140,9 @@ func TestCryptoMiddlewareRejectsInvalidRequests(t *testing.T) {
 			require.Equal(t, "invalid encrypted body\n", response.Body.String())
 			require.False(t, called)
 			require.True(t, body.closed)
+			if tt.privateKey == nil {
+				require.False(t, body.read)
+			}
 		})
 	}
 }
@@ -147,6 +150,12 @@ func TestCryptoMiddlewareRejectsInvalidRequests(t *testing.T) {
 type cryptoTestBody struct {
 	io.Reader
 	closed bool
+	read   bool
+}
+
+func (b *cryptoTestBody) Read(p []byte) (int, error) {
+	b.read = true
+	return b.Reader.Read(p)
 }
 
 func (b *cryptoTestBody) Close() error {

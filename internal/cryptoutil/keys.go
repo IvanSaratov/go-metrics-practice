@@ -1,7 +1,9 @@
 package cryptoutil
 
 import (
+	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
@@ -34,6 +36,10 @@ func LoadPublicKey(path string) (*rsa.PublicKey, error) {
 	key, ok := parsed.(*rsa.PublicKey)
 	if !ok {
 		return nil, fmt.Errorf("public key must be RSA")
+	}
+	// Пробное шифрование проверяет параметры RSA и место для нашего AES-ключа.
+	if _, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, key, make([]byte, aesKeySize), nil); err != nil {
+		return nil, fmt.Errorf("validate RSA public key: %w", err)
 	}
 	return key, nil
 }

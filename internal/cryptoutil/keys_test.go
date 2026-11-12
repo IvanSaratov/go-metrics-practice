@@ -24,6 +24,12 @@ func TestLoadPublicKey(t *testing.T) {
 	require.NoError(t, err)
 	otherPKIX, err := x509.MarshalPKIXPublicKey(otherKey)
 	require.NoError(t, err)
+	invalidExponent := *key
+	invalidExponent.E = 2
+	invalidModulus := *key
+	invalidModulus.N = new(big.Int).Sub(key.N, big.NewInt(1))
+	invalidPKIX, err := x509.MarshalPKIXPublicKey(&invalidModulus)
+	require.NoError(t, err)
 
 	tests := []struct {
 		name    string
@@ -40,6 +46,9 @@ func TestLoadPublicKey(t *testing.T) {
 		{name: "invalid PKIX", path: writeKeyFile(t, keyPEM("PUBLIC KEY", []byte("invalid DER"))), wantErr: true},
 		{name: "invalid PKCS1", path: writeKeyFile(t, keyPEM("RSA PUBLIC KEY", []byte("invalid DER"))), wantErr: true},
 		{name: "not RSA", path: writeKeyFile(t, keyPEM("PUBLIC KEY", otherPKIX)), wantErr: true},
+		{name: "even modulus", path: writeKeyFile(t, keyPEM("PUBLIC KEY", invalidPKIX)), wantErr: true},
+		{name: "invalid exponent", path: writeKeyFile(t, keyPEM("RSA PUBLIC KEY", x509.MarshalPKCS1PublicKey(&invalidExponent))), wantErr: true},
+		{name: "key too small", path: writeKeyFile(t, keyPEM("RSA PUBLIC KEY", x509.MarshalPKCS1PublicKey(&rsa.PublicKey{N: big.NewInt(17), E: 65537}))), wantErr: true},
 		{name: "unsupported PEM type", path: writeKeyFile(t, keyPEM("CERTIFICATE", pkix)), wantErr: true},
 		{name: "private key", path: writeKeyFile(t, keyPEM("RSA PRIVATE KEY", x509.MarshalPKCS1PrivateKey(privateKey))), wantErr: true},
 	}

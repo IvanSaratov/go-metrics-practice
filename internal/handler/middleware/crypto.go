@@ -25,13 +25,20 @@ func CryptoMiddleware(privateKey *rsa.PrivateKey) func(http.Handler) http.Handle
 				return
 			}
 
+			// Без ключа запрос заведомо не расшифровать, поэтому не читаем тело в память.
+			if privateKey == nil {
+				_ = r.Body.Close()
+				http.Error(w, "invalid encrypted body", http.StatusBadRequest)
+				return
+			}
+
 			body, err := io.ReadAll(r.Body)
 			_ = r.Body.Close()
 			if err != nil {
 				http.Error(w, "invalid encrypted body", http.StatusBadRequest)
 				return
 			}
-			// Отсутствующий ключ, чужой ключ и повреждённое тело дают одинаковый HTTP-ответ.
+			// Чужой ключ и повреждённое тело дают одинаковый HTTP-ответ.
 			body, err = cryptoutil.Decrypt(privateKey, body)
 			if err != nil {
 				http.Error(w, "invalid encrypted body", http.StatusBadRequest)
