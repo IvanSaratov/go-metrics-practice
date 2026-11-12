@@ -5,14 +5,18 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/IvanSaratov/go-metrics-practice/internal/cryptoutil"
 	"github.com/IvanSaratov/go-metrics-practice/internal/handler"
 	"github.com/IvanSaratov/go-metrics-practice/internal/repository"
 	"github.com/stretchr/testify/require"
@@ -27,61 +31,74 @@ func (f serverPingFunc) PingContext(ctx context.Context) error {
 	return f(ctx)
 }
 
-func newTestHandler(storage repository.Storage, appLogger *zap.Logger, key string) http.Handler {
+func newTestHandler(storage repository.Storage, appLogger *zap.Logger, key string, privateKey *rsa.PrivateKey) http.Handler {
 	server := handler.NewServer(
 		storage,
 		serverPingFunc(func(context.Context) error { return nil }),
 		nil,
 	)
-	return withMiddleware(server, appLogger, key)
+	return withMiddleware(server, appLogger, key, privateKey)
 }
 
 func TestServerHandlerSupportsGzip(t *testing.T) {
 	const key = "secret"
-
-	metricID := strings.Repeat("TestGauge", 20)
-	payload := []byte(`{"id":"` + metricID + `","type":"gauge","value":67.1}`)
-	var compressed bytes.Buffer
-	writer := gzip.NewWriter(&compressed)
-	_, err := writer.Write(payload)
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
-	require.NoError(t, writer.Close())
 
-	core, observedLogs := observer.New(zapcore.DebugLevel)
-	log := zap.New(core)
-	storage := repository.NewMemStorage()
-	request := httptest.NewRequest(http.MethodPost, "/update", &compressed)
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Content-Encoding", "gzip")
-	request.Header.Set("Accept-Encoding", "gzip")
-	request.Header.Set("HashSHA256", hmacSHA256(t, compressed.Bytes(), key))
-	response := httptest.NewRecorder()
+	for _, encrypted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("encrypted=%t", encrypted), func(t *testing.T) {
+			metricID := strings.Repeat("TestGauge", 20)
+			payload := []byte(`{"id":"` + metricID + `","type":"gauge","value":67.1}`)
+			var compressed bytes.Buffer
+			writer := gzip.NewWriter(&compressed)
+			_, err := writer.Write(payload)
+			require.NoError(t, err)
+			require.NoError(t, writer.Close())
 
-	newTestHandler(storage, log, key).ServeHTTP(response, request)
+			core, observedLogs := observer.New(zapcore.DebugLevel)
+			log := zap.New(core)
+			storage := repository.NewMemStorage()
+			body := compressed.Bytes()
+			encoding := "gzip"
+			if encrypted {
+				body, err = cryptoutil.Encrypt(&privateKey.PublicKey, body)
+				require.NoError(t, err)
+				encoding = "gzip, rsa-aesgcm"
+			}
+			request := httptest.NewRequest(http.MethodPost, "/update", bytes.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Content-Encoding", encoding)
+			request.Header.Set("Accept-Encoding", "gzip")
+			request.Header.Set("HashSHA256", hmacSHA256(t, body, key))
+			response := httptest.NewRecorder()
 
-	require.Equal(t, http.StatusOK, response.Code)
-	require.Equal(t, "gzip", response.Header().Get("Content-Encoding"))
-	require.Equal(
-		t,
-		hmacSHA256(t, response.Body.Bytes(), key),
-		response.Header().Get("HashSHA256"),
-	)
+			newTestHandler(storage, log, key, privateKey).ServeHTTP(response, request)
 
-	reader, err := gzip.NewReader(bytes.NewReader(response.Body.Bytes()))
-	require.NoError(t, err)
-	body, err := io.ReadAll(reader)
-	require.NoError(t, err)
-	require.NoError(t, reader.Close())
-	require.JSONEq(t, string(payload), string(body))
+			require.Equal(t, http.StatusOK, response.Code)
+			require.Equal(t, "gzip", response.Header().Get("Content-Encoding"))
+			require.Equal(
+				t,
+				hmacSHA256(t, response.Body.Bytes(), key),
+				response.Header().Get("HashSHA256"),
+			)
 
-	value, ok, err := storage.GetGauge(context.Background(), metricID)
-	require.NoError(t, err)
-	require.True(t, ok)
-	require.Equal(t, 67.1, value)
+			reader, err := gzip.NewReader(bytes.NewReader(response.Body.Bytes()))
+			require.NoError(t, err)
+			responseBody, err := io.ReadAll(reader)
+			require.NoError(t, err)
+			require.NoError(t, reader.Close())
+			require.JSONEq(t, string(payload), string(responseBody))
 
-	entries := observedLogs.All()
-	require.Len(t, entries, 1)
-	require.EqualValues(t, response.Body.Len(), entries[0].ContextMap()["size"])
+			value, ok, err := storage.GetGauge(context.Background(), metricID)
+			require.NoError(t, err)
+			require.True(t, ok)
+			require.Equal(t, 67.1, value)
+
+			entries := observedLogs.All()
+			require.Len(t, entries, 1)
+			require.EqualValues(t, response.Body.Len(), entries[0].ContextMap()["size"])
+		})
+	}
 }
 
 func TestServerHandlerProvidesDatabasePing(t *testing.T) {
@@ -93,7 +110,7 @@ func TestServerHandlerProvidesDatabasePing(t *testing.T) {
 		serverPingFunc(func(context.Context) error { return nil }),
 		nil,
 	)
-	withMiddleware(server, zap.NewNop(), "").ServeHTTP(response, request)
+	withMiddleware(server, zap.NewNop(), "", nil).ServeHTTP(response, request)
 
 	require.Equal(t, http.StatusOK, response.Code)
 }
@@ -113,7 +130,7 @@ func TestServerHandlerRejectsCorruptedGzipRequest(t *testing.T) {
 	request.Header.Set("Content-Encoding", "gzip")
 	response := httptest.NewRecorder()
 
-	newTestHandler(repository.NewMemStorage(), zap.NewNop(), "").ServeHTTP(response, request)
+	newTestHandler(repository.NewMemStorage(), zap.NewNop(), "", nil).ServeHTTP(response, request)
 
 	require.Equal(t, http.StatusBadRequest, response.Code)
 }
@@ -131,7 +148,7 @@ func TestServerHandlerLimitsDecompressedRequest(t *testing.T) {
 	request.Header.Set("Content-Encoding", "gzip")
 	response := httptest.NewRecorder()
 
-	newTestHandler(repository.NewMemStorage(), zap.NewNop(), "").ServeHTTP(response, request)
+	newTestHandler(repository.NewMemStorage(), zap.NewNop(), "", nil).ServeHTTP(response, request)
 
 	require.Equal(t, http.StatusRequestEntityTooLarge, response.Code)
 }
@@ -152,7 +169,7 @@ func TestServerHandlerRejectsInvalidSignatureWithoutSavingMetric(t *testing.T) {
 	)
 	response := httptest.NewRecorder()
 
-	newTestHandler(storage, zap.NewNop(), "secret").ServeHTTP(response, request)
+	newTestHandler(storage, zap.NewNop(), "secret", nil).ServeHTTP(response, request)
 
 	require.Equal(t, http.StatusBadRequest, response.Code)
 	_, found, err := storage.GetGauge(context.Background(), "TestGauge")
@@ -172,7 +189,7 @@ func TestServerHandlerAllowsUnsignedRequestWithKey(t *testing.T) {
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 
-	newTestHandler(storage, zap.NewNop(), "secret").ServeHTTP(response, request)
+	newTestHandler(storage, zap.NewNop(), "secret", nil).ServeHTTP(response, request)
 
 	require.Equal(t, http.StatusOK, response.Code)
 	value, found, err := storage.GetGauge(context.Background(), "TestGauge")

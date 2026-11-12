@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/IvanSaratov/go-metrics-practice/internal/config/db"
+	"github.com/IvanSaratov/go-metrics-practice/internal/cryptoutil"
 	"github.com/IvanSaratov/go-metrics-practice/internal/handler"
 	"github.com/IvanSaratov/go-metrics-practice/internal/repository"
 	"go.uber.org/zap"
@@ -22,6 +23,12 @@ func runServer(
 	config serverConfig,
 	appLogger *zap.Logger,
 ) (resultErr error) {
+	// Проверяем ключ до открытия БД и HTTP-порта.
+	privateKey, err := cryptoutil.LoadPrivateKey(config.cryptoKeyPath)
+	if err != nil {
+		return fmt.Errorf("load private key: %w", err)
+	}
+
 	var database *sql.DB
 	databaseDSN := strings.TrimSpace(config.databaseDSN)
 	if databaseDSN != "" {
@@ -83,7 +90,7 @@ func runServer(
 		}()
 	}
 
-	requests := &drainingHandler{next: withMiddleware(router, appLogger, config.key)}
+	requests := &drainingHandler{next: withMiddleware(router, appLogger, config.key, privateKey)}
 	server := &http.Server{
 		Addr:    config.address,
 		Handler: requests,

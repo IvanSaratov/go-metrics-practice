@@ -192,7 +192,7 @@ func TestServerHandlerKeepsSuccessWhenAuditFails(t *testing.T) {
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 
-	withMiddleware(server, appLogger, "").ServeHTTP(response, request)
+	withMiddleware(server, appLogger, "", nil).ServeHTTP(response, request)
 
 	require.Equal(t, http.StatusOK, response.Code)
 	value, found, err := storage.GetGauge(context.Background(), "Alloc")
