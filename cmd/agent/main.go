@@ -12,6 +12,7 @@ import (
 	"github.com/IvanSaratov/go-metrics-practice/internal/agent"
 	"github.com/IvanSaratov/go-metrics-practice/internal/buildinfo"
 	"github.com/IvanSaratov/go-metrics-practice/internal/cliflags"
+	"github.com/IvanSaratov/go-metrics-practice/internal/cryptoutil"
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
 )
@@ -125,6 +126,12 @@ func newAgentApp(run func(config agentConfig) error) *cli.App {
 }
 
 func runAgent(config agentConfig) error {
+	// Читаем ключ один раз, до запуска воркеров. Пустой путь отключает шифрование.
+	publicKey, err := cryptoutil.LoadPublicKey(config.cryptoKeyPath)
+	if err != nil {
+		return fmt.Errorf("load public key: %w", err)
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -135,6 +142,7 @@ func runAgent(config agentConfig) error {
 		cliflags.NormalizeBaseURL(config.serverAddress),
 		httpClient,
 		config.key,
+		publicKey,
 	)
 	metrics := agent.NewMetrics()
 	metricsAgent := agent.NewAgent(

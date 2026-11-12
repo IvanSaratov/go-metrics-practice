@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -37,21 +38,25 @@ func TestMainExitCodes(t *testing.T) {
 	build := exec.CommandContext(buildCtx, "go", "build", "-o", binary, ".")
 	output, err := build.CombinedOutput()
 	require.NoError(t, err, "%s", output)
+	invalidKeyPath := filepath.Join(t.TempDir(), "invalid.pem")
+	require.NoError(t, os.WriteFile(invalidKeyPath, []byte("not a PEM key"), 0o600))
 
 	for _, tt := range []struct {
 		name     string
-		flag     string
+		args     []string
 		wantCode int
 		wantText string
 	}{
-		{name: "help", flag: "--help", wantCode: 0, wantText: "USAGE:"},
-		{name: "unknown flag", flag: "-unknown", wantCode: 1, wantText: "flag provided but not defined"},
+		{name: "help", args: []string{"--help"}, wantCode: 0, wantText: "USAGE:"},
+		{name: "unknown flag", args: []string{"-unknown"}, wantCode: 1, wantText: "flag provided but not defined"},
+		{name: "missing crypto key", args: []string{"-crypto-key", filepath.Join(t.TempDir(), "missing.pem"), "-p", "1h", "-r", "1h"}, wantCode: 1, wantText: "load public key"},
+		{name: "invalid crypto key", args: []string{"-crypto-key", invalidKeyPath, "-p", "1h", "-r", "1h"}, wantCode: 1, wantText: "load public key"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 
-			command := exec.CommandContext(ctx, binary, tt.flag)
+			command := exec.CommandContext(ctx, binary, tt.args...)
 			// Настройки из окружения не должны влиять на проверку флагов.
 			command.Env = []string{}
 			output, err := command.CombinedOutput()

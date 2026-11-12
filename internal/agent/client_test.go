@@ -5,6 +5,8 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -20,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/IvanSaratov/go-metrics-practice/internal/cryptoutil"
 	"github.com/IvanSaratov/go-metrics-practice/internal/model"
 	retrylib "github.com/sethvargo/go-retry"
 	"github.com/stretchr/testify/require"
@@ -50,7 +53,7 @@ func TestClientSendGauge(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, compressionDisabledClient(), "")
+	client := NewClient(server.URL, compressionDisabledClient(), "", nil)
 
 	err := client.SendGauge("TestGauge", 67.1)
 
@@ -92,7 +95,7 @@ func TestClientSendCounter(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, compressionDisabledClient(), "")
+	client := NewClient(server.URL, compressionDisabledClient(), "", nil)
 
 	err := client.SendCounter("TestCounter", 10)
 
@@ -140,7 +143,7 @@ func TestClientSendBatch(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, compressionDisabledClient(), "")
+	client := NewClient(server.URL, compressionDisabledClient(), "", nil)
 
 	err := client.SendBatch(context.Background(), want)
 
@@ -152,6 +155,87 @@ func TestClientSendBatch(t *testing.T) {
 	require.Equal(t, "gzip", contentEncoding)
 	require.Equal(t, "gzip", acceptEncoding)
 	require.Equal(t, want, metrics)
+}
+
+func TestClientEncryptsRequests(t *testing.T) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	gaugeValue := 67.1
+	counterDelta := int64(10)
+	gauge := model.Metrics{ID: "TestGauge", MType: model.Gauge, Value: &gaugeValue}
+	counter := model.Metrics{ID: "TestCounter", MType: model.Counter, Delta: &counterDelta}
+	batch := []model.Metrics{gauge, counter}
+
+	for _, tt := range []struct {
+		name string
+		path string
+		want any
+		send func(*Client) error
+	}{
+		{"gauge", "/update", gauge, func(c *Client) error { return c.SendGauge(gauge.ID, gaugeValue) }},
+		{"counter", "/update", counter, func(c *Client) error { return c.SendCounter(counter.ID, counterDelta) }},
+		{"batch", "/updates/", batch, func(c *Client) error { return c.SendBatch(context.Background(), batch) }},
+	} {
+		for _, key := range []string{"", "secret"} {
+			t.Run(tt.name+"/key="+key, func(t *testing.T) {
+				var requestBody []byte
+				var headers http.Header
+				var method, path string
+				var readErr error
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					requestBody, readErr = io.ReadAll(r.Body)
+					headers = r.Header.Clone()
+					method, path = r.Method, r.URL.Path
+					w.Header().Set("Content-Type", "application/json")
+				}))
+				defer server.Close()
+				client := NewClient(server.URL, compressionDisabledClient(), key, &privateKey.PublicKey)
+
+				require.NoError(t, tt.send(client))
+				require.NoError(t, readErr)
+				require.Equal(t, http.MethodPost, method)
+				require.Equal(t, tt.path, path)
+				require.Equal(t, "application/json", headers.Get("Content-Type"))
+				require.Equal(t, "gzip, rsa-aesgcm", headers.Get("Content-Encoding"))
+				require.Equal(t, "gzip", headers.Get("Accept-Encoding"))
+
+				compressed, err := cryptoutil.Decrypt(privateKey, requestBody)
+				require.NoError(t, err)
+				reader, err := gzip.NewReader(bytes.NewReader(compressed))
+				require.NoError(t, err)
+				defer reader.Close()
+				body, err := io.ReadAll(reader)
+				require.NoError(t, err)
+				wantJSON, err := json.Marshal(tt.want)
+				require.NoError(t, err)
+				require.JSONEq(t, string(wantJSON), string(body))
+
+				if key == "" {
+					require.Empty(t, headers.Get("HashSHA256"))
+				} else {
+					hash := hmac.New(sha256.New, []byte(key))
+					_, err = hash.Write(requestBody)
+					require.NoError(t, err)
+					require.Equal(t, hex.EncodeToString(hash.Sum(nil)), headers.Get("HashSHA256"))
+				}
+			})
+		}
+	}
+}
+
+func TestClientDoesNotSendOnEncryptionError(t *testing.T) {
+	var requests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+	}))
+	defer server.Close()
+	client := NewClient(server.URL, compressionDisabledClient(), "", &rsa.PublicKey{})
+
+	err := client.SendGauge("TestGauge", 67.1)
+
+	require.Error(t, err)
+	require.Zero(t, requests.Load())
 }
 
 func TestClientSignsCompressedRequestBody(t *testing.T) {
@@ -171,7 +255,7 @@ func TestClientSignsCompressedRequestBody(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, compressionDisabledClient(), key)
+	client := NewClient(server.URL, compressionDisabledClient(), key, nil)
 
 	err := client.SendGauge("TestGauge", 67.1)
 
@@ -193,7 +277,7 @@ func TestClientOmitsSignatureWithoutKey(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, compressionDisabledClient(), "")
+	client := NewClient(server.URL, compressionDisabledClient(), "", nil)
 
 	err := client.SendGauge("TestGauge", 67.1)
 
@@ -202,27 +286,41 @@ func TestClientOmitsSignatureWithoutKey(t *testing.T) {
 }
 
 func TestClientRetriesTransportErrors(t *testing.T) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
 	gaugeValue := 67.1
 	want := []model.Metrics{
 		{ID: "TestGauge", MType: model.Gauge, Value: &gaugeValue},
 	}
-	httpClient := &flakyHTTPClient{
-		failures: 3,
-		failureErr: &net.OpError{
-			Op:  "dial",
-			Net: "tcp",
-			Err: errors.New("connection refused"),
-		},
-	}
-	client := NewClient("http://localhost", httpClient, "")
-	client.retry = retryWithoutDelay
+	for _, encrypted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("encrypted=%t", encrypted), func(t *testing.T) {
+			httpClient := &flakyHTTPClient{
+				failures: 3,
+				failureErr: &net.OpError{
+					Op:  "dial",
+					Net: "tcp",
+					Err: errors.New("connection refused"),
+				},
+			}
+			var publicKey *rsa.PublicKey
+			if encrypted {
+				publicKey = &privateKey.PublicKey
+				httpClient.privateKey = privateKey
+			}
+			client := NewClient("http://localhost", httpClient, "secret", publicKey)
+			client.retry = retryWithoutDelay
 
-	err := client.SendBatch(context.Background(), want)
+			err := client.SendBatch(context.Background(), want)
 
-	require.NoError(t, err)
-	require.Len(t, httpClient.received, 4)
-	for _, metrics := range httpClient.received {
-		require.Equal(t, want, metrics)
+			require.NoError(t, err)
+			require.Len(t, httpClient.received, 4)
+			require.NotEmpty(t, httpClient.hashes[0])
+			for i, metrics := range httpClient.received {
+				require.Equal(t, want, metrics)
+				require.Equal(t, httpClient.bodies[0], httpClient.bodies[i])
+				require.Equal(t, httpClient.hashes[0], httpClient.hashes[i])
+			}
+		})
 	}
 }
 
@@ -240,7 +338,7 @@ func TestClientStopsRetryWhenContextCanceled(t *testing.T) {
 			cancel()
 		},
 	}
-	client := NewClient("http://localhost", httpClient, "")
+	client := NewClient("http://localhost", httpClient, "", nil)
 
 	err := client.SendBatch(ctx, []model.Metrics{
 		{ID: "TestGauge", MType: model.Gauge, Value: &gaugeValue},
@@ -256,7 +354,7 @@ func TestClientDoesNotRetryOtherErrors(t *testing.T) {
 		failures:   4,
 		failureErr: errors.New("request failed after connection"),
 	}
-	client := NewClient("http://localhost", httpClient, "")
+	client := NewClient("http://localhost", httpClient, "", nil)
 	client.retry = retryWithoutDelay
 
 	err := client.SendBatch(context.Background(), []model.Metrics{
@@ -276,7 +374,7 @@ func TestClientDoesNotSendEmptyBatch(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, compressionDisabledClient(), "")
+	client := NewClient(server.URL, compressionDisabledClient(), "", nil)
 
 	err := client.SendBatch(context.Background(), nil)
 
@@ -291,7 +389,7 @@ func TestClientRejectsNonJSONResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, server.Client(), "")
+	client := NewClient(server.URL, server.Client(), "", nil)
 
 	err := client.SendGauge("TestGauge", 67.1)
 
@@ -308,7 +406,7 @@ func TestClientRejectsInvalidGzipResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, compressionDisabledClient(), "")
+	client := NewClient(server.URL, compressionDisabledClient(), "", nil)
 
 	err := client.SendGauge("TestGauge", 67.1)
 
@@ -333,7 +431,7 @@ func TestClientRejectsCorruptedGzipResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, compressionDisabledClient(), "")
+	client := NewClient(server.URL, compressionDisabledClient(), "", nil)
 
 	err := client.SendGauge("TestGauge", 67.1)
 
@@ -442,11 +540,26 @@ type flakyHTTPClient struct {
 	failureErr error
 	received   [][]model.Metrics
 	onRequest  func()
+	privateKey *rsa.PrivateKey
+	bodies     [][]byte
+	hashes     []string
 }
 
 func (c *flakyHTTPClient) Do(request *http.Request) (*http.Response, error) {
-	metrics, err := decodeGzipMetrics(request.Body)
+	body, err := io.ReadAll(request.Body)
 	_ = request.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+	c.bodies = append(c.bodies, body)
+	c.hashes = append(c.hashes, request.Header.Get("HashSHA256"))
+	if c.privateKey != nil {
+		body, err = cryptoutil.Decrypt(c.privateKey, body)
+		if err != nil {
+			return nil, err
+		}
+	}
+	metrics, err := decodeGzipMetrics(bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}

@@ -21,7 +21,7 @@ func TestAgentRunPollsMetrics(t *testing.T) {
 	metrics := NewMetrics()
 	agent := NewAgent(
 		metrics,
-		NewClient("http://localhost", &recordingHTTPClient{}, ""),
+		NewClient("http://localhost", &recordingHTTPClient{}, "", nil),
 		time.Millisecond,
 		time.Hour,
 		1,
@@ -56,7 +56,7 @@ func TestAgentRunContinuesWhenReportFails(t *testing.T) {
 	httpClient := &recordingHTTPClient{
 		err: errors.New("send batch failed"),
 	}
-	client := NewClient("http://localhost", httpClient, "")
+	client := NewClient("http://localhost", httpClient, "", nil)
 	client.retry = retryWithoutDelay
 	agent := NewAgent(
 		metrics,
@@ -92,7 +92,7 @@ func TestAgentRunPollsMetricsWhileReportIsBlocked(t *testing.T) {
 	httpClient := &blockingHTTPClient{}
 	agent := NewAgent(
 		metrics,
-		NewClient("http://localhost", httpClient, ""),
+		NewClient("http://localhost", httpClient, "", nil),
 		time.Millisecond,
 		time.Millisecond,
 		1,
@@ -126,7 +126,7 @@ func TestAgentRunLimitsConcurrentReports(t *testing.T) {
 	httpClient := &blockingHTTPClient{}
 	agent := NewAgent(
 		metrics,
-		NewClient("http://localhost", httpClient, ""),
+		NewClient("http://localhost", httpClient, "", nil),
 		time.Hour,
 		time.Millisecond,
 		2,
@@ -156,7 +156,7 @@ func TestAgentRunCollectsSystemMetrics(t *testing.T) {
 	metrics := NewMetrics()
 	agent := NewAgent(
 		metrics,
-		NewClient("http://localhost", &recordingHTTPClient{}, ""),
+		NewClient("http://localhost", &recordingHTTPClient{}, "", nil),
 		time.Millisecond,
 		time.Hour,
 		1,
@@ -198,7 +198,7 @@ func TestAgentRunPollsRuntimeWhileSystemCollectionIsBlocked(t *testing.T) {
 	}
 	agent := NewAgent(
 		metrics,
-		NewClient("http://localhost", &recordingHTTPClient{}, ""),
+		NewClient("http://localhost", &recordingHTTPClient{}, "", nil),
 		time.Millisecond,
 		time.Hour,
 		1,
