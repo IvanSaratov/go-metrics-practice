@@ -11,7 +11,7 @@ import (
 )
 
 func TestRunReturnsExitCodes(t *testing.T) {
-	for _, name := range []string{"ADDRESS", "POLL_INTERVAL", "REPORT_INTERVAL", "TIMEOUT", "KEY", "RATE_LIMIT"} {
+	for _, name := range []string{"ADDRESS", "POLL_INTERVAL", "REPORT_INTERVAL", "TIMEOUT", "KEY", "CRYPTO_KEY", "RATE_LIMIT"} {
 		t.Setenv(name, "")
 	}
 
@@ -70,6 +70,7 @@ func TestMainExitCodes(t *testing.T) {
 
 func TestAgentAppUsesDefaults(t *testing.T) {
 	t.Setenv("KEY", "")
+	t.Setenv("CRYPTO_KEY", "")
 	t.Setenv("RATE_LIMIT", "")
 
 	var got agentConfig
@@ -86,6 +87,7 @@ func TestAgentAppUsesDefaults(t *testing.T) {
 	require.Equal(t, 10*time.Second, got.reportInterval)
 	require.Equal(t, 30*time.Second, got.timeout)
 	require.Empty(t, got.key)
+	require.Empty(t, got.cryptoKeyPath)
 	require.Equal(t, 1, got.rateLimit)
 }
 
@@ -97,24 +99,27 @@ func TestAgentAppParsesFlags(t *testing.T) {
 		wantReportInterval time.Duration
 		wantTimeout        time.Duration
 		wantKey            string
+		wantCryptoKeyPath  string
 		wantRateLimit      int
 	}{
 		{
 			name:               "numeric poll interval and duration report interval",
-			args:               []string{"agent", "-a", "localhost:9090", "-p", "3", "-r", "7s", "-t", "20s", "-k", "flag-secret", "-l", "3"},
+			args:               []string{"agent", "-a", "localhost:9090", "-p", "3", "-r", "7s", "-t", "20s", "-k", "flag-secret", "-crypto-key", "public.pem", "-l", "3"},
 			wantPollInterval:   3 * time.Second,
 			wantReportInterval: 7 * time.Second,
 			wantTimeout:        20 * time.Second,
 			wantKey:            "flag-secret",
+			wantCryptoKeyPath:  "public.pem",
 			wantRateLimit:      3,
 		},
 		{
 			name:               "different intervals",
-			args:               []string{"agent", "-a", "localhost:9090", "-p", "1h", "-r", "2m", "-t", "5ms", "--key", "long-secret", "--rate-limit", "4"},
+			args:               []string{"agent", "-a", "localhost:9090", "-p", "1h", "-r", "2m", "-t", "5ms", "--key", "long-secret", "--crypto-key", "public.pem", "--rate-limit", "4"},
 			wantPollInterval:   time.Hour,
 			wantReportInterval: 2 * time.Minute,
 			wantTimeout:        5 * time.Millisecond,
 			wantKey:            "long-secret",
+			wantCryptoKeyPath:  "public.pem",
 			wantRateLimit:      4,
 		},
 		{
@@ -130,6 +135,7 @@ func TestAgentAppParsesFlags(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("KEY", "")
+			t.Setenv("CRYPTO_KEY", "")
 			t.Setenv("RATE_LIMIT", "")
 
 			var got agentConfig
@@ -146,6 +152,7 @@ func TestAgentAppParsesFlags(t *testing.T) {
 			require.Equal(t, tt.wantReportInterval, got.reportInterval)
 			require.Equal(t, tt.wantTimeout, got.timeout)
 			require.Equal(t, tt.wantKey, got.key)
+			require.Equal(t, tt.wantCryptoKeyPath, got.cryptoKeyPath)
 			require.Equal(t, tt.wantRateLimit, got.rateLimit)
 		})
 	}
@@ -161,6 +168,7 @@ func TestAgentAppParsesEnvs(t *testing.T) {
 		wantReportInterval time.Duration
 		wantTimeout        time.Duration
 		wantKey            string
+		wantCryptoKeyPath  string
 		wantRateLimit      int
 	}{
 		{
@@ -172,6 +180,7 @@ func TestAgentAppParsesEnvs(t *testing.T) {
 				"REPORT_INTERVAL": "15s",
 				"TIMEOUT":         "20s",
 				"KEY":             "env-secret",
+				"CRYPTO_KEY":      "env-public.pem",
 				"RATE_LIMIT":      "5",
 			},
 			wantAddress:        "localhost:9090",
@@ -179,17 +188,19 @@ func TestAgentAppParsesEnvs(t *testing.T) {
 			wantReportInterval: 15 * time.Second,
 			wantTimeout:        20 * time.Second,
 			wantKey:            "env-secret",
+			wantCryptoKeyPath:  "env-public.pem",
 			wantRateLimit:      5,
 		},
 		{
 			name: "flag overrides env",
-			args: []string{"agent", "-a", "localhost:7777", "-p", "3", "-r", "7s", "-t", "10s", "-k", "flag-secret", "-l", "3"},
+			args: []string{"agent", "-a", "localhost:7777", "-p", "3", "-r", "7s", "-t", "10s", "-k", "flag-secret", "-crypto-key", "flag-public.pem", "-l", "3"},
 			env: map[string]string{
 				"ADDRESS":         "localhost:9090",
 				"POLL_INTERVAL":   "5s",
 				"REPORT_INTERVAL": "15s",
 				"TIMEOUT":         "20s",
 				"KEY":             "env-secret",
+				"CRYPTO_KEY":      "env-public.pem",
 				"RATE_LIMIT":      "5",
 			},
 			wantAddress:        "localhost:7777",
@@ -197,6 +208,7 @@ func TestAgentAppParsesEnvs(t *testing.T) {
 			wantReportInterval: 7 * time.Second,
 			wantTimeout:        10 * time.Second,
 			wantKey:            "flag-secret",
+			wantCryptoKeyPath:  "flag-public.pem",
 			wantRateLimit:      3,
 		},
 		{
@@ -213,11 +225,24 @@ func TestAgentAppParsesEnvs(t *testing.T) {
 			wantTimeout:        20 * time.Second,
 			wantRateLimit:      1,
 		},
+		{
+			name: "empty crypto key overrides env",
+			args: []string{"agent", "-crypto-key="},
+			env: map[string]string{
+				"CRYPTO_KEY": "env-public.pem",
+			},
+			wantAddress:        "localhost:8080",
+			wantPollInterval:   2 * time.Second,
+			wantReportInterval: 10 * time.Second,
+			wantTimeout:        30 * time.Second,
+			wantRateLimit:      1,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("KEY", "")
+			t.Setenv("CRYPTO_KEY", "")
 			t.Setenv("RATE_LIMIT", "")
 			for k, v := range tt.env {
 				t.Setenv(k, v)
@@ -237,6 +262,7 @@ func TestAgentAppParsesEnvs(t *testing.T) {
 			require.Equal(t, tt.wantReportInterval, got.reportInterval)
 			require.Equal(t, tt.wantTimeout, got.timeout)
 			require.Equal(t, tt.wantKey, got.key)
+			require.Equal(t, tt.wantCryptoKeyPath, got.cryptoKeyPath)
 			require.Equal(t, tt.wantRateLimit, got.rateLimit)
 		})
 	}

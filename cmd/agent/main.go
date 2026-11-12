@@ -28,6 +28,7 @@ type agentConfig struct {
 	reportInterval time.Duration
 	timeout        time.Duration
 	key            string
+	cryptoKeyPath  string
 	rateLimit      int
 }
 
@@ -89,6 +90,11 @@ func newAgentApp(run func(config agentConfig) error) *cli.App {
 			EnvVars: []string{"KEY"},
 			Usage:   "Key for signing request bodies",
 		},
+		&cli.StringFlag{
+			Name:    "crypto-key",
+			EnvVars: []string{"CRYPTO_KEY"},
+			Usage:   "Путь к файлу с публичным ключом шифрования",
+		},
 		&cli.IntFlag{
 			Name:    "l",
 			Aliases: []string{"rate-limit"},
@@ -110,6 +116,7 @@ func newAgentApp(run func(config agentConfig) error) *cli.App {
 			reportInterval: ctx.Generic("r").(*cliflags.Duration).Duration(),
 			timeout:        ctx.Generic("t").(*cliflags.Duration).Duration(),
 			key:            ctx.String("key"),
+			cryptoKeyPath:  ctx.String("crypto-key"),
 			rateLimit:      rateLimit,
 		})
 	}

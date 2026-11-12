@@ -14,6 +14,7 @@ type serverConfig struct {
 	restore         bool
 	databaseDSN     string
 	key             string
+	cryptoKeyPath   string
 	auditFile       string
 	auditURL        string
 }
@@ -64,6 +65,11 @@ func newServerApp(run func(config serverConfig) error) *cli.App {
 			Usage:   "Key for signing HTTP bodies",
 		},
 		&cli.StringFlag{
+			Name:    "crypto-key",
+			EnvVars: []string{"CRYPTO_KEY"},
+			Usage:   "Путь к файлу с приватным ключом шифрования",
+		},
+		&cli.StringFlag{
 			Name:    "audit-file",
 			EnvVars: []string{"AUDIT_FILE"},
 			Usage:   "Audit log file path",
@@ -87,6 +93,7 @@ func newServerApp(run func(config serverConfig) error) *cli.App {
 			restore:         ctx.Bool("restore"),
 			databaseDSN:     ctx.String("database-dsn"),
 			key:             ctx.String("key"),
+			cryptoKeyPath:   ctx.String("crypto-key"),
 			auditFile:       ctx.String("audit-file"),
 			auditURL:        ctx.String("audit-url"),
 		})

@@ -9,6 +9,7 @@ import (
 
 func TestServerAppUsesDefaultAddress(t *testing.T) {
 	t.Setenv("KEY", "")
+	t.Setenv("CRYPTO_KEY", "")
 	t.Setenv("AUDIT_FILE", "")
 	t.Setenv("AUDIT_URL", "")
 
@@ -27,12 +28,14 @@ func TestServerAppUsesDefaultAddress(t *testing.T) {
 	require.True(t, got.restore)
 	require.Empty(t, got.databaseDSN)
 	require.Empty(t, got.key)
+	require.Empty(t, got.cryptoKeyPath)
 	require.Empty(t, got.auditFile)
 	require.Empty(t, got.auditURL)
 }
 
 func TestServerAppParsesFlags(t *testing.T) {
 	t.Setenv("KEY", "")
+	t.Setenv("CRYPTO_KEY", "")
 
 	var got serverConfig
 	app := newServerApp(func(config serverConfig) error {
@@ -48,6 +51,7 @@ func TestServerAppParsesFlags(t *testing.T) {
 		"-r=false",
 		"-d", "postgres://flag-user:flag-password@localhost:5432/flag-db?sslmode=disable",
 		"-k", "flag-secret",
+		"-crypto-key", "private.pem",
 		"--audit-file", "./logs/audit.jsonl",
 		"--audit-url", "http://localhost:9090/audit",
 	})
@@ -63,6 +67,7 @@ func TestServerAppParsesFlags(t *testing.T) {
 		got.databaseDSN,
 	)
 	require.Equal(t, "flag-secret", got.key)
+	require.Equal(t, "private.pem", got.cryptoKeyPath)
 	require.Equal(t, "./logs/audit.jsonl", got.auditFile)
 	require.Equal(t, "http://localhost:9090/audit", got.auditURL)
 }
@@ -77,6 +82,7 @@ func TestServerAppParsesEnv(t *testing.T) {
 		"postgres://env-user:env-password@localhost:5432/env-db?sslmode=disable",
 	)
 	t.Setenv("KEY", "env-secret")
+	t.Setenv("CRYPTO_KEY", "env-private.pem")
 	t.Setenv("AUDIT_FILE", "./env/audit.jsonl")
 	t.Setenv("AUDIT_URL", "https://example.com/env-audit")
 	var got serverConfig
@@ -98,6 +104,7 @@ func TestServerAppParsesEnv(t *testing.T) {
 		got.databaseDSN,
 	)
 	require.Equal(t, "env-secret", got.key)
+	require.Equal(t, "env-private.pem", got.cryptoKeyPath)
 	require.Equal(t, "./env/audit.jsonl", got.auditFile)
 	require.Equal(t, "https://example.com/env-audit", got.auditURL)
 }
@@ -176,18 +183,31 @@ func TestServerAppAuditConfiguration(t *testing.T) {
 	}
 }
 
-func TestServerAppKeyFlagOverridesEnvironment(t *testing.T) {
+func TestServerAppKeyFlagsOverrideEnvironment(t *testing.T) {
 	t.Setenv("KEY", "env-secret")
-	var got serverConfig
-	app := newServerApp(func(config serverConfig) error {
-		got = config
-		return nil
-	})
+	t.Setenv("CRYPTO_KEY", "env-private.pem")
 
-	err := app.Run([]string{"server", "-k", "flag-secret"})
+	for _, tt := range []struct {
+		name          string
+		cryptoKeyPath string
+	}{
+		{name: "crypto key path", cryptoKeyPath: "flag-private.pem"},
+		{name: "empty crypto key"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var got serverConfig
+			app := newServerApp(func(config serverConfig) error {
+				got = config
+				return nil
+			})
 
-	require.NoError(t, err)
-	require.Equal(t, "flag-secret", got.key)
+			err := app.Run([]string{"server", "-k", "flag-secret", "--crypto-key=" + tt.cryptoKeyPath})
+
+			require.NoError(t, err)
+			require.Equal(t, "flag-secret", got.key)
+			require.Equal(t, tt.cryptoKeyPath, got.cryptoKeyPath)
+		})
+	}
 }
 
 func TestServerAppDatabaseDSNFlagOverridesEnvironment(t *testing.T) {
