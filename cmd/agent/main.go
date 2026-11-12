@@ -14,7 +14,7 @@ import (
 	"github.com/IvanSaratov/go-metrics-practice/internal/cliflags"
 	"github.com/IvanSaratov/go-metrics-practice/internal/cryptoutil"
 	log "github.com/sirupsen/logrus"
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 )
 
 var (
@@ -46,78 +46,77 @@ func runMain() {
 
 func run(args []string) int {
 	app := newAgentApp(runAgent)
-	if err := app.Run(args); err != nil {
+	if err := app.Run(context.Background(), args); err != nil {
 		log.Error(err)
 		return 1
 	}
 	return 0
 }
 
-func newAgentApp(run func(config agentConfig) error) *cli.App {
-	app := cli.NewApp()
-	app.Name = "agent"
+func newAgentApp(run func(config agentConfig) error) *cli.Command {
+	app := &cli.Command{Name: "agent"}
 	app.Flags = []cli.Flag{
 		&cli.StringFlag{
 			Name:    "a",
 			Aliases: []string{"address"},
-			EnvVars: []string{"ADDRESS"},
+			Sources: cli.EnvVars("ADDRESS"),
 			Value:   "localhost:8080",
 			Usage:   "HTTP server address to connect",
 		},
 		&cli.GenericFlag{
 			Name:    "p",
 			Aliases: []string{"poll_interval"},
-			EnvVars: []string{"POLL_INTERVAL"},
+			Sources: cli.EnvVars("POLL_INTERVAL"),
 			Value:   cliflags.NewDuration(2 * time.Second),
 			Usage:   "Set runtime metrics poll interval",
 		},
 		&cli.GenericFlag{
 			Name:    "r",
 			Aliases: []string{"report_interval"},
-			EnvVars: []string{"REPORT_INTERVAL"},
+			Sources: cli.EnvVars("REPORT_INTERVAL"),
 			Value:   cliflags.NewDuration(10 * time.Second),
 			Usage:   "Set metrics report interval",
 		},
 		&cli.GenericFlag{
 			Name:    "t",
 			Aliases: []string{"timeout"},
-			EnvVars: []string{"TIMEOUT"},
+			Sources: cli.EnvVars("TIMEOUT"),
 			Value:   cliflags.NewDuration(30 * time.Second),
 			Usage:   "Server connection timeout",
 		},
 		&cli.StringFlag{
 			Name:    "key",
 			Aliases: []string{"k"},
-			EnvVars: []string{"KEY"},
+			Sources: cli.EnvVars("KEY"),
 			Usage:   "Key for signing request bodies",
 		},
 		&cli.StringFlag{
 			Name:    "crypto-key",
-			EnvVars: []string{"CRYPTO_KEY"},
+			Sources: cli.EnvVars("CRYPTO_KEY"),
 			Usage:   "Путь к файлу с публичным ключом шифрования",
 		},
 		&cli.IntFlag{
 			Name:    "l",
 			Aliases: []string{"rate-limit"},
-			EnvVars: []string{"RATE_LIMIT"},
+			Sources: cli.EnvVars("RATE_LIMIT"),
 			Value:   1,
 			Usage:   "Maximum number of concurrent requests",
 		},
 	}
-	app.Action = func(ctx *cli.Context) error {
-		rateLimit := ctx.Int("l")
+	app.Action = func(_ context.Context, cmd *cli.Command) error {
+		rateLimit := cmd.Int("l")
 		// Количество будущих воркеров должно быть положительным.
 		if rateLimit <= 0 {
 			return fmt.Errorf("rate limit must be positive")
 		}
 
 		return run(agentConfig{
-			serverAddress:  ctx.String("a"),
-			pollInterval:   ctx.Generic("p").(*cliflags.Duration).Duration(),
-			reportInterval: ctx.Generic("r").(*cliflags.Duration).Duration(),
-			timeout:        ctx.Generic("t").(*cliflags.Duration).Duration(),
-			key:            ctx.String("key"),
-			cryptoKeyPath:  ctx.String("crypto-key"),
+			serverAddress:  cmd.String("a"),
+			pollInterval:   cmd.Generic("p").(*cliflags.Duration).Duration(),
+			reportInterval: cmd.Generic("r").(*cliflags.Duration).Duration(),
+			timeout:        cmd.Generic("t").(*cliflags.Duration).Duration(),
+			key:            cmd.String("key"),
+			cryptoKeyPath:  cmd.String("crypto-key"),
 			rateLimit:      rateLimit,
 		})
 	}

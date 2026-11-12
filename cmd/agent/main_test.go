@@ -24,6 +24,9 @@ func TestRunReturnsExitCodes(t *testing.T) {
 		{name: "help", args: []string{"agent", "--help"}, wantCode: 0},
 		{name: "unknown flag", args: []string{"agent", "-unknown"}, wantCode: 1},
 		{name: "invalid config", args: []string{"agent", "-l", "0"}, wantCode: 1},
+		{name: "invalid poll interval", args: []string{"agent", "-p", "invalid"}, wantCode: 1},
+		{name: "invalid report interval", args: []string{"agent", "-r", "invalid"}, wantCode: 1},
+		{name: "invalid timeout", args: []string{"agent", "-t", "invalid"}, wantCode: 1},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			require.Equal(t, tt.wantCode, run(tt.args))
@@ -84,7 +87,7 @@ func TestAgentAppUsesDefaults(t *testing.T) {
 		return nil
 	})
 
-	err := app.Run([]string{"agent"})
+	err := app.Run(t.Context(), []string{"agent"})
 
 	require.NoError(t, err)
 	require.Equal(t, "localhost:8080", got.serverAddress)
@@ -149,7 +152,7 @@ func TestAgentAppParsesFlags(t *testing.T) {
 				return nil
 			})
 
-			err := app.Run(tt.args)
+			err := app.Run(t.Context(), tt.args)
 
 			require.NoError(t, err)
 			require.Equal(t, "localhost:9090", got.serverAddress)
@@ -259,7 +262,7 @@ func TestAgentAppParsesEnvs(t *testing.T) {
 				return nil
 			})
 
-			err := app.Run(tt.args)
+			err := app.Run(t.Context(), tt.args)
 
 			require.NoError(t, err)
 			require.Equal(t, tt.wantAddress, got.serverAddress)
@@ -284,7 +287,7 @@ func TestAgentAppRejectsNonPositiveRateLimit(t *testing.T) {
 				return nil
 			})
 
-			err := app.Run([]string{"agent", "-l", value})
+			err := app.Run(t.Context(), []string{"agent", "-l", value})
 
 			require.ErrorContains(t, err, "rate limit must be positive")
 			require.False(t, runCalled)
@@ -297,7 +300,7 @@ func TestAgentAppRejectsUnknownFlag(t *testing.T) {
 		return nil
 	})
 
-	err := app.Run([]string{"agent", "-unknown"})
+	err := app.Run(t.Context(), []string{"agent", "-unknown"})
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "flag provided but not defined")

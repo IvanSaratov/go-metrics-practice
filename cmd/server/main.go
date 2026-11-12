@@ -45,7 +45,7 @@ func run(args []string, appLogger *zap.Logger) int {
 		return runServer(ctx, config, appLogger)
 	})
 
-	if err := app.Run(args); err != nil {
+	if err := app.Run(ctx, args); err != nil {
 		appLogger.Error("server failed", zap.Error(err))
 		return 1
 	}

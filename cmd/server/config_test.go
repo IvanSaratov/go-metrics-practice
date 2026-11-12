@@ -19,7 +19,7 @@ func TestServerAppUsesDefaultAddress(t *testing.T) {
 		return nil
 	})
 
-	err := app.Run([]string{"server"})
+	err := app.Run(t.Context(), []string{"server"})
 
 	require.NoError(t, err)
 	require.Equal(t, "localhost:8080", got.address)
@@ -34,8 +34,16 @@ func TestServerAppUsesDefaultAddress(t *testing.T) {
 }
 
 func TestServerAppParsesFlags(t *testing.T) {
-	t.Setenv("KEY", "")
-	t.Setenv("CRYPTO_KEY", "")
+	// Флаги должны перекрывать окружение для всех настроек сервера.
+	t.Setenv("ADDRESS", "localhost:7070")
+	t.Setenv("STORE_INTERVAL", "20")
+	t.Setenv("FILE_STORAGE_PATH", "./env/metrics.json")
+	t.Setenv("RESTORE", "true")
+	t.Setenv("DATABASE_DSN", "postgres://localhost/env-db")
+	t.Setenv("KEY", "env-secret")
+	t.Setenv("CRYPTO_KEY", "env-private.pem")
+	t.Setenv("AUDIT_FILE", "./env/audit.jsonl")
+	t.Setenv("AUDIT_URL", "https://example.com/env-audit")
 
 	var got serverConfig
 	app := newServerApp(func(config serverConfig) error {
@@ -43,7 +51,7 @@ func TestServerAppParsesFlags(t *testing.T) {
 		return nil
 	})
 
-	err := app.Run([]string{
+	err := app.Run(t.Context(), []string{
 		"server",
 		"-a", "localhost:9090",
 		"-i", "15",
@@ -91,7 +99,7 @@ func TestServerAppParsesEnv(t *testing.T) {
 		return nil
 	})
 
-	err := app.Run([]string{"server"})
+	err := app.Run(t.Context(), []string{"server"})
 
 	require.NoError(t, err)
 	require.Equal(t, "localhost:9090", got.address)
@@ -174,7 +182,7 @@ func TestServerAppAuditConfiguration(t *testing.T) {
 				return nil
 			})
 
-			err := app.Run(append([]string{"server"}, tt.args...))
+			err := app.Run(t.Context(), append([]string{"server"}, tt.args...))
 
 			require.NoError(t, err)
 			require.Equal(t, tt.wantFile, got.auditFile)
@@ -201,7 +209,7 @@ func TestServerAppKeyFlagsOverrideEnvironment(t *testing.T) {
 				return nil
 			})
 
-			err := app.Run([]string{"server", "-k", "flag-secret", "--crypto-key=" + tt.cryptoKeyPath})
+			err := app.Run(t.Context(), []string{"server", "-k", "flag-secret", "--crypto-key=" + tt.cryptoKeyPath})
 
 			require.NoError(t, err)
 			require.Equal(t, "flag-secret", got.key)
@@ -221,7 +229,7 @@ func TestServerAppDatabaseDSNFlagOverridesEnvironment(t *testing.T) {
 		return nil
 	})
 
-	err := app.Run([]string{
+	err := app.Run(t.Context(), []string{
 		"server",
 		"-d", "postgres://flag-user:flag-password@localhost:5432/flag-db?sslmode=disable",
 	})
@@ -241,7 +249,7 @@ func TestServerAppParsesDatabaseDSNFlag(t *testing.T) {
 		return nil
 	})
 
-	err := app.Run([]string{
+	err := app.Run(t.Context(), []string{
 		"server",
 		"--database-dsn",
 		"postgres://url-user:url-password@localhost:5432/url-db?sslmode=disable",
@@ -255,14 +263,29 @@ func TestServerAppParsesDatabaseDSNFlag(t *testing.T) {
 	)
 }
 
-func TestServerAppRejectsNegativeStoreInterval(t *testing.T) {
-	app := newServerApp(func(config serverConfig) error {
-		return nil
-	})
+func TestServerAppStoreInterval(t *testing.T) {
+	t.Setenv("STORE_INTERVAL", "20")
 
-	err := app.Run([]string{"server", "-i", "-1"})
+	for _, value := range []string{"0", "-1"} {
+		t.Run(value, func(t *testing.T) {
+			runCalled := false
+			app := newServerApp(func(config serverConfig) error {
+				runCalled = true
+				require.Zero(t, config.storeInterval)
+				return nil
+			})
 
-	require.Error(t, err)
+			err := app.Run(t.Context(), []string{"server", "-i", value})
+
+			if value == "0" {
+				require.NoError(t, err)
+				require.True(t, runCalled)
+			} else {
+				require.ErrorContains(t, err, "store interval must not be negative")
+				require.False(t, runCalled)
+			}
+		})
+	}
 }
 
 func TestServerAppRejectsUnknownFlag(t *testing.T) {
@@ -270,7 +293,7 @@ func TestServerAppRejectsUnknownFlag(t *testing.T) {
 		return nil
 	})
 
-	err := app.Run([]string{"server", "-unknown"})
+	err := app.Run(t.Context(), []string{"server", "-unknown"})
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "flag provided but not defined")

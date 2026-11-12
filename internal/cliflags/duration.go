@@ -40,6 +40,11 @@ func (d *Duration) String() string {
 	return d.value.String()
 }
 
+// Get возвращает сам объект, чтобы cli.Command.Generic мог прочитать Duration.
+func (d *Duration) Get() any {
+	return d
+}
+
 // Duration возвращает сохранённую длительность.
 func (d *Duration) Duration() time.Duration {
 	return d.value
