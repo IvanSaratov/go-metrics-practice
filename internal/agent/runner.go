@@ -134,11 +134,21 @@ func (a *Agent) reportWorker(ctx context.Context, reports <-chan struct{}) {
 		case <-ctx.Done():
 			return
 		case <-reports:
-			if err := a.client.SendBatch(ctx, a.metrics.snapshot()); err != nil {
+			if err := a.report(ctx); err != nil {
 				if ctx.Err() == nil {
 					log.WithError(err).Warn("failed to report metrics")
 				}
 			}
 		}
 	}
+}
+
+// При ошибке возвращает счётчики в накопитель для следующей отправки.
+func (a *Agent) report(ctx context.Context) error {
+	batch := a.metrics.takeSnapshot()
+	if err := a.client.SendBatch(ctx, batch); err != nil {
+		a.metrics.restoreCounters(batch)
+		return err
+	}
+	return nil
 }

@@ -11,8 +11,96 @@ import (
 	"testing"
 	"time"
 
+	"github.com/IvanSaratov/go-metrics-practice/internal/model"
 	"github.com/stretchr/testify/require"
 )
+
+func TestAgentReportPreservesPendingCounters(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		failures    int
+		wantPending int64
+	}{
+		{name: "successful report", wantPending: 3},
+		{name: "failed report", failures: 1, wantPending: 13},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			metrics := NewMetrics()
+			metrics.gauges["TestGauge"] = 67.1
+			metrics.counters["TestCounter"] = 10
+			sendErr := errors.New("send failed")
+			httpClient := &flakyHTTPClient{
+				failures: tt.failures, failureErr: sendErr,
+				onRequest: func() {
+					// За время отправки собраны новые значения.
+					metrics.mu.Lock()
+					defer metrics.mu.Unlock()
+					metrics.counters["TestCounter"] += 3
+					metrics.gauges["TestGauge"] = 99.0
+				},
+			}
+			agent := NewAgent(metrics, NewClient("http://localhost", httpClient, "", nil), time.Hour, time.Hour, 1)
+
+			err := agent.report(t.Context())
+
+			if tt.failures == 0 {
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, sendErr)
+			}
+			gauge, delta := 67.1, int64(10)
+			require.Len(t, httpClient.received, 1)
+			require.ElementsMatch(t, []model.Metrics{
+				{ID: "TestGauge", MType: model.Gauge, Value: &gauge},
+				{ID: "TestCounter", MType: model.Counter, Delta: &delta},
+			}, httpClient.received[0])
+			require.Equal(t, tt.wantPending, metrics.counters["TestCounter"])
+			require.Equal(t, 99.0, metrics.gauges["TestGauge"])
+
+			httpClient.onRequest = nil
+			require.NoError(t, agent.report(t.Context()))
+
+			gauge = 99.0
+			require.Len(t, httpClient.received, 2)
+			require.ElementsMatch(t, []model.Metrics{
+				{ID: "TestGauge", MType: model.Gauge, Value: &gauge},
+				{ID: "TestCounter", MType: model.Counter, Delta: &tt.wantPending},
+			}, httpClient.received[1])
+			require.Zero(t, metrics.counters["TestCounter"])
+		})
+	}
+}
+
+func TestAgentRunDoesNotRepeatCounters(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	metrics := NewMetrics()
+	metrics.gauges["TestGauge"] = 67.1
+	metrics.counters["TestCounter"] = 10
+	httpClient := &flakyHTTPClient{}
+	httpClient.onRequest = func() {
+		if len(httpClient.received) >= 2 {
+			cancel()
+		}
+	}
+	agent := NewAgent(metrics, NewClient("http://localhost", httpClient, "", nil), time.Hour, time.Millisecond, 1)
+
+	agent.Run(ctx)
+
+	require.ErrorIs(t, ctx.Err(), context.Canceled)
+	require.GreaterOrEqual(t, len(httpClient.received), 2)
+	var total int64
+	for _, batch := range httpClient.received {
+		for _, metric := range batch {
+			if metric.MType == model.Counter {
+				require.NotNil(t, metric.Delta)
+				total += *metric.Delta
+			}
+		}
+	}
+	require.Equal(t, int64(10), total)
+	require.Zero(t, metrics.counters["TestCounter"])
+}
 
 func TestAgentRunPollsMetrics(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
