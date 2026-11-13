@@ -40,7 +40,7 @@ func runMain() {
 }
 
 func run(args []string, appLogger *zap.Logger) int {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT)
 	defer stop()
 
 	app := newServerApp(func(config serverConfig) error {

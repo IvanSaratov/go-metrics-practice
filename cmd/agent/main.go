@@ -199,7 +199,7 @@ func runAgent(config agentConfig) error {
 		return fmt.Errorf("load public key: %w", err)
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT)
 	defer stop()
 
 	httpClient := &http.Client{
