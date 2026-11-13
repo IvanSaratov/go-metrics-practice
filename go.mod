@@ -14,14 +14,15 @@ require (
 	github.com/sirupsen/logrus v1.9.4
 	github.com/stretchr/testify v1.12.1
 	github.com/timakin/bodyclose v0.0.0-20260923065923-98ded9ab4ef2
+	github.com/urfave/cli-altsrc/v3 v3.1.0
 	github.com/urfave/cli/v3 v3.14.0
 	go.uber.org/zap v1.28.0
 	golang.org/x/tools v0.52.0
+	gopkg.in/yaml.v3 v3.0.1
 	honnef.co/go/tools v0.8.2
 )
 
 require (
-	github.com/BurntSushi/toml v1.5.0 // indirect
 	github.com/ebitengine/purego v0.10.2 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/gostaticanalysis/analysisutil v0.7.1 // indirect

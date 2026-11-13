@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
@@ -10,6 +11,7 @@ import (
 	"github.com/IvanSaratov/go-metrics-practice/internal/buildinfo"
 	applogger "github.com/IvanSaratov/go-metrics-practice/internal/logger"
 	"go.uber.org/zap"
+	"gopkg.in/yaml.v3"
 )
 
 var (
@@ -51,4 +53,25 @@ func run(args []string, appLogger *zap.Logger) int {
 	}
 
 	return 0
+}
+
+// validateJSONConfig проверяет файл, поскольку altsrc скрывает ошибки чтения.
+func validateJSONConfig(path string) error {
+	if path == "" {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read config %q: %w", path, err)
+	}
+	if !json.Valid(data) {
+		return fmt.Errorf("config %q contains invalid JSON", path)
+	}
+
+	// JSON-источник altsrc использует YAML-парсер. Проверяем, что он примет объект.
+	var config map[any]any
+	if err := yaml.Unmarshal(data, &config); err != nil || config == nil {
+		return fmt.Errorf("config %q must contain a JSON object without duplicate keys", path)
+	}
+	return nil
 }
