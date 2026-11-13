@@ -221,7 +221,9 @@ func runAgent(config agentConfig) error {
 	)
 
 	log.Info("starting agent")
-	metricsAgent.Run(ctx)
+	if err := metricsAgent.Run(ctx); err != nil {
+		return err
+	}
 	log.Info("agent stopped")
 	return nil
 }

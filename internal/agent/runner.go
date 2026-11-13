@@ -3,6 +3,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -41,9 +42,11 @@ func NewAgent(
 }
 
 // Run запускает сбор и отправку метрик и работает до отмены ctx.
-// Перед возвратом ждёт завершения всех горутин агента.
-// Ошибки сбора и отправки записываются в лог и не останавливают агента.
-func (a *Agent) Run(ctx context.Context) {
+// Перед возвратом ждёт текущие операции и отправляет оставшиеся метрики.
+// Обычные ошибки пишет в лог, ошибку финальной отправки возвращает вызывающему коду.
+func (a *Agent) Run(ctx context.Context) error {
+	// Сигнал останавливает расписание, но не должен прерывать начатые запросы.
+	workCtx := context.WithoutCancel(ctx)
 	reports := make(chan struct{})
 	var workers sync.WaitGroup
 	// Лимит относится только к отправке, ещё три горутины собирают и планируют
@@ -64,11 +67,15 @@ func (a *Agent) Run(ctx context.Context) {
 	for range a.rateLimit {
 		go func() {
 			defer workers.Done()
-			a.reportWorker(ctx, reports)
+			a.reportWorker(workCtx, reports)
 		}()
 	}
 
 	workers.Wait()
+	if err := a.report(workCtx); err != nil {
+		return fmt.Errorf("send final metrics: %w", err)
+	}
+	return nil
 }
 
 // периодически обновляет метрики среды выполнения Go
@@ -81,6 +88,9 @@ func (a *Agent) collectRuntime(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if ctx.Err() != nil {
+				return
+			}
 			a.metrics.collectRuntimeMetrics()
 		}
 	}
@@ -90,17 +100,20 @@ func (a *Agent) collectRuntime(ctx context.Context) {
 func (a *Agent) collectSystem(ctx context.Context) {
 	ticker := time.NewTicker(a.pollInterval)
 	defer ticker.Stop()
+	// Уже начатый сбор должен закончиться до финальной отправки.
+	workCtx := context.WithoutCancel(ctx)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			values, err := a.systemCollector.collect(ctx)
+			if ctx.Err() != nil {
+				return
+			}
+			values, err := a.systemCollector.collect(workCtx)
 			if err != nil {
-				if ctx.Err() == nil {
-					log.WithError(err).Warn("failed to collect system metrics")
-				}
+				log.WithError(err).Warn("failed to collect system metrics")
 				continue
 			}
 			a.metrics.updateSystemMetrics(values)
@@ -110,6 +123,8 @@ func (a *Agent) collectSystem(ctx context.Context) {
 
 // передаёт задания свободным воркерам без накопления очереди
 func (a *Agent) scheduleReports(ctx context.Context, reports chan<- struct{}) {
+	// Закрытый канал сообщает воркерам, что новых заданий больше не будет.
+	defer close(reports)
 	ticker := time.NewTicker(a.reportInterval)
 	defer ticker.Stop()
 
@@ -118,6 +133,9 @@ func (a *Agent) scheduleReports(ctx context.Context, reports chan<- struct{}) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if ctx.Err() != nil {
+				return
+			}
 			select {
 			case reports <- struct{}{}:
 			case <-ctx.Done():
@@ -129,16 +147,9 @@ func (a *Agent) scheduleReports(ctx context.Context, reports chan<- struct{}) {
 
 // отправляет актуальный снимок метрик по заданию планировщика
 func (a *Agent) reportWorker(ctx context.Context, reports <-chan struct{}) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-reports:
-			if err := a.report(ctx); err != nil {
-				if ctx.Err() == nil {
-					log.WithError(err).Warn("failed to report metrics")
-				}
-			}
+	for range reports {
+		if err := a.report(ctx); err != nil {
+			log.WithError(err).Warn("failed to report metrics")
 		}
 	}
 }

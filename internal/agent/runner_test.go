@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/IvanSaratov/go-metrics-practice/internal/model"
@@ -85,7 +86,7 @@ func TestAgentRunDoesNotRepeatCounters(t *testing.T) {
 	}
 	agent := NewAgent(metrics, NewClient("http://localhost", httpClient, "", nil), time.Hour, time.Millisecond, 1)
 
-	agent.Run(ctx)
+	require.NoError(t, agent.Run(ctx))
 
 	require.ErrorIs(t, ctx.Err(), context.Canceled)
 	require.GreaterOrEqual(t, len(httpClient.received), 2)
@@ -102,24 +103,136 @@ func TestAgentRunDoesNotRepeatCounters(t *testing.T) {
 	require.Zero(t, metrics.counters["TestCounter"])
 }
 
+func TestAgentRunFlushesPendingMetrics(t *testing.T) {
+	sendErr := errors.New("final report failed")
+	for _, tt := range []struct {
+		name    string
+		pending int64
+		err     error
+	}{
+		{name: "empty metrics"},
+		{name: "pending metrics", pending: 10},
+		{name: "failed final report", pending: 10, err: sendErr},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			metrics := NewMetrics()
+			if tt.pending != 0 {
+				metrics.counters["TestCounter"] = tt.pending
+			}
+			httpClient := &recordingHTTPClient{err: tt.err}
+			agent := NewAgent(metrics, NewClient("http://localhost", httpClient, "", nil), time.Hour, time.Hour, 1)
+
+			err := agent.Run(ctx)
+
+			if tt.err != nil {
+				require.ErrorIs(t, err, tt.err)
+				require.Equal(t, tt.pending, metrics.counters["TestCounter"])
+			} else {
+				require.NoError(t, err)
+				require.Zero(t, metrics.counters["TestCounter"])
+			}
+			if tt.pending == 0 {
+				require.Zero(t, httpClient.requests.Load())
+			} else {
+				require.Equal(t, int32(1), httpClient.requests.Load())
+			}
+		})
+	}
+}
+
+func TestAgentRunWaitsForInFlightReport(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		release := make(chan struct{})
+		releaseRequest := sync.OnceFunc(func() { close(release) })
+		defer releaseRequest()
+		metrics := NewMetrics()
+		metrics.gauges["TestGauge"] = 67.1
+		metrics.counters["TestCounter"] = 10
+		httpClient := &blockingHTTPClient{started: make(chan struct{}), release: release}
+		agent := NewAgent(metrics, NewClient("http://localhost", httpClient, "", nil), time.Hour, time.Millisecond, 1)
+		done := make(chan error, 1)
+		go func() { done <- agent.Run(ctx) }()
+		<-httpClient.started
+
+		cancel()
+		synctest.Wait()
+
+		require.Equal(t, int32(1), httpClient.current.Load(), "signal interrupted the active request")
+		select {
+		case err := <-done:
+			t.Fatalf("agent stopped before the request completed: %v", err)
+		default:
+		}
+
+		releaseRequest()
+		require.NoError(t, waitAgentStopped(t, done))
+		require.Zero(t, httpClient.current.Load())
+		require.Equal(t, int32(2), httpClient.requests.Load())
+		require.Equal(t, int32(1), httpClient.maximum.Load(), "final report started before the worker stopped")
+	})
+}
+
+func TestAgentRunWaitsForSystemCollection(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		release := make(chan struct{})
+		releaseCollection := sync.OnceFunc(func() { close(release) })
+		defer releaseCollection()
+		collector := &blockingSystemMetricsCollector{
+			started: make(chan struct{}), release: release,
+			values: systemMetrics{totalMemory: 4096},
+		}
+		httpClient := &flakyHTTPClient{}
+		agent := NewAgent(NewMetrics(), NewClient("http://localhost", httpClient, "", nil), time.Millisecond, time.Hour, 1)
+		agent.systemCollector = collector
+		done := make(chan error, 1)
+		go func() { done <- agent.Run(ctx) }()
+		<-collector.started
+
+		cancel()
+		synctest.Wait()
+
+		select {
+		case err := <-done:
+			t.Fatalf("agent stopped before system metrics were collected: %v", err)
+		default:
+		}
+		require.Empty(t, httpClient.received, "final report started before collection finished")
+
+		releaseCollection()
+		require.NoError(t, waitAgentStopped(t, done))
+		require.Equal(t, int32(1), collector.calls.Load())
+		require.Len(t, httpClient.received, 1)
+		totalMemory := 4096.0
+		require.Contains(t, httpClient.received[0], model.Metrics{
+			ID: "TotalMemory", MType: model.Gauge, Value: &totalMemory,
+		})
+	})
+}
+
 func TestAgentRunPollsMetrics(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	metrics := NewMetrics()
+	httpClient := &flakyHTTPClient{}
 	agent := NewAgent(
 		metrics,
-		NewClient("http://localhost", &recordingHTTPClient{}, "", nil),
+		NewClient("http://localhost", httpClient, "", nil),
 		time.Millisecond,
 		time.Hour,
 		1,
 	)
 	agent.systemCollector = staticSystemMetricsCollector{}
-	done := make(chan struct{})
+	done := make(chan error, 1)
 
 	go func() {
-		defer close(done)
-		agent.Run(ctx)
+		done <- agent.Run(ctx)
 	}()
 
 	require.Eventually(t, func() bool {
@@ -128,11 +241,16 @@ func TestAgentRunPollsMetrics(t *testing.T) {
 		return metrics.counters["PollCount"] > 0
 	}, 100*time.Millisecond, time.Millisecond)
 	cancel()
-	select {
-	case <-done:
-	case <-time.After(100 * time.Millisecond):
-		t.Fatal("expected agent to stop after context cancellation")
+	require.NoError(t, waitAgentStopped(t, done))
+	require.Len(t, httpClient.received, 1)
+	var reportedPollCount int64
+	for _, metric := range httpClient.received[0] {
+		if metric.ID == "PollCount" {
+			require.NotNil(t, metric.Delta)
+			reportedPollCount = *metric.Delta
+		}
 	}
+	require.Positive(t, reportedPollCount)
 }
 
 func TestAgentRunContinuesWhenReportFails(t *testing.T) {
@@ -153,11 +271,10 @@ func TestAgentRunContinuesWhenReportFails(t *testing.T) {
 		time.Millisecond,
 		1,
 	)
-	done := make(chan struct{})
+	done := make(chan error, 1)
 
 	go func() {
-		defer close(done)
-		agent.Run(ctx)
+		done <- agent.Run(ctx)
 	}()
 
 	require.Eventually(t, func() bool {
@@ -165,11 +282,7 @@ func TestAgentRunContinuesWhenReportFails(t *testing.T) {
 	}, time.Second, time.Millisecond)
 	cancel()
 
-	select {
-	case <-done:
-	case <-time.After(100 * time.Millisecond):
-		t.Fatal("expected agent to stop after context cancellation")
-	}
+	require.ErrorIs(t, waitAgentStopped(t, done), httpClient.err)
 }
 
 func TestAgentRunPollsMetricsWhileReportIsBlocked(t *testing.T) {
@@ -177,7 +290,10 @@ func TestAgentRunPollsMetricsWhileReportIsBlocked(t *testing.T) {
 	defer cancel()
 
 	metrics := NewMetrics()
-	httpClient := &blockingHTTPClient{}
+	release := make(chan struct{})
+	releaseRequest := sync.OnceFunc(func() { close(release) })
+	defer releaseRequest()
+	httpClient := &blockingHTTPClient{release: release}
 	agent := NewAgent(
 		metrics,
 		NewClient("http://localhost", httpClient, "", nil),
@@ -186,11 +302,10 @@ func TestAgentRunPollsMetricsWhileReportIsBlocked(t *testing.T) {
 		1,
 	)
 	agent.systemCollector = staticSystemMetricsCollector{}
-	done := make(chan struct{})
+	done := make(chan error, 1)
 
 	go func() {
-		defer close(done)
-		agent.Run(ctx)
+		done <- agent.Run(ctx)
 	}()
 
 	require.Eventually(t, func() bool {
@@ -202,7 +317,8 @@ func TestAgentRunPollsMetricsWhileReportIsBlocked(t *testing.T) {
 	}, time.Second, time.Millisecond)
 
 	cancel()
-	waitAgentStopped(t, done)
+	releaseRequest()
+	require.NoError(t, waitAgentStopped(t, done))
 }
 
 func TestAgentRunLimitsConcurrentReports(t *testing.T) {
@@ -211,7 +327,10 @@ func TestAgentRunLimitsConcurrentReports(t *testing.T) {
 
 	metrics := NewMetrics()
 	metrics.gauges["TestGauge"] = 67.1
-	httpClient := &blockingHTTPClient{}
+	release := make(chan struct{})
+	releaseRequest := sync.OnceFunc(func() { close(release) })
+	defer releaseRequest()
+	httpClient := &blockingHTTPClient{release: release}
 	agent := NewAgent(
 		metrics,
 		NewClient("http://localhost", httpClient, "", nil),
@@ -219,11 +338,10 @@ func TestAgentRunLimitsConcurrentReports(t *testing.T) {
 		time.Millisecond,
 		2,
 	)
-	done := make(chan struct{})
+	done := make(chan error, 1)
 
 	go func() {
-		defer close(done)
-		agent.Run(ctx)
+		done <- agent.Run(ctx)
 	}()
 
 	require.Eventually(t, func() bool {
@@ -234,7 +352,8 @@ func TestAgentRunLimitsConcurrentReports(t *testing.T) {
 	require.Equal(t, int32(2), httpClient.requests.Load())
 
 	cancel()
-	waitAgentStopped(t, done)
+	releaseRequest()
+	require.NoError(t, waitAgentStopped(t, done))
 }
 
 func TestAgentRunCollectsSystemMetrics(t *testing.T) {
@@ -256,11 +375,10 @@ func TestAgentRunCollectsSystemMetrics(t *testing.T) {
 			cpuUtilization: []float64{12.5, 98.25},
 		},
 	}
-	done := make(chan struct{})
+	done := make(chan error, 1)
 
 	go func() {
-		defer close(done)
-		agent.Run(ctx)
+		done <- agent.Run(ctx)
 	}()
 
 	require.Eventually(t, func() bool {
@@ -273,7 +391,7 @@ func TestAgentRunCollectsSystemMetrics(t *testing.T) {
 	}, time.Second, time.Millisecond)
 
 	cancel()
-	waitAgentStopped(t, done)
+	require.NoError(t, waitAgentStopped(t, done))
 }
 
 func TestAgentRunPollsRuntimeWhileSystemCollectionIsBlocked(t *testing.T) {
@@ -281,8 +399,12 @@ func TestAgentRunPollsRuntimeWhileSystemCollectionIsBlocked(t *testing.T) {
 	defer cancel()
 
 	metrics := NewMetrics()
+	release := make(chan struct{})
+	releaseCollection := sync.OnceFunc(func() { close(release) })
+	defer releaseCollection()
 	systemCollector := &blockingSystemMetricsCollector{
 		started: make(chan struct{}),
+		release: release,
 	}
 	agent := NewAgent(
 		metrics,
@@ -292,11 +414,10 @@ func TestAgentRunPollsRuntimeWhileSystemCollectionIsBlocked(t *testing.T) {
 		1,
 	)
 	agent.systemCollector = systemCollector
-	done := make(chan struct{})
+	done := make(chan error, 1)
 
 	go func() {
-		defer close(done)
-		agent.Run(ctx)
+		done <- agent.Run(ctx)
 	}()
 
 	select {
@@ -310,7 +431,8 @@ func TestAgentRunPollsRuntimeWhileSystemCollectionIsBlocked(t *testing.T) {
 	}, time.Second, time.Millisecond)
 
 	cancel()
-	waitAgentStopped(t, done)
+	releaseCollection()
+	require.NoError(t, waitAgentStopped(t, done))
 }
 
 func pollCount(metrics *Metrics) int64 {
@@ -319,13 +441,15 @@ func pollCount(metrics *Metrics) int64 {
 	return metrics.counters["PollCount"]
 }
 
-func waitAgentStopped(t *testing.T, done <-chan struct{}) {
+func waitAgentStopped(t *testing.T, done <-chan error) error {
 	t.Helper()
 
 	select {
-	case <-done:
+	case err := <-done:
+		return err
 	case <-time.After(time.Second):
 		t.Fatal("expected agent to stop after context cancellation")
+		return nil
 	}
 }
 
@@ -336,12 +460,15 @@ type recordingHTTPClient struct {
 
 func (c *recordingHTTPClient) Do(request *http.Request) (*http.Response, error) {
 	c.requests.Add(1)
+	defer request.Body.Close()
+	if err := request.Context().Err(); err != nil {
+		return nil, err
+	}
 	if c.err != nil {
 		return nil, c.err
 	}
 
 	_, _ = io.Copy(io.Discard, request.Body)
-	_ = request.Body.Close()
 	return &http.Response{
 		StatusCode: http.StatusOK,
 		Header: http.Header{
@@ -352,9 +479,12 @@ func (c *recordingHTTPClient) Do(request *http.Request) (*http.Response, error) 
 }
 
 type blockingHTTPClient struct {
-	requests atomic.Int32
-	current  atomic.Int32
-	maximum  atomic.Int32
+	requests    atomic.Int32
+	current     atomic.Int32
+	maximum     atomic.Int32
+	started     chan struct{}
+	startedOnce sync.Once
+	release     <-chan struct{}
 }
 
 func (c *blockingHTTPClient) Do(request *http.Request) (*http.Response, error) {
@@ -371,8 +501,19 @@ func (c *blockingHTTPClient) Do(request *http.Request) (*http.Response, error) {
 		}
 	}
 
-	<-request.Context().Done()
-	return nil, request.Context().Err()
+	if c.started != nil {
+		c.startedOnce.Do(func() { close(c.started) })
+	}
+	select {
+	case <-request.Context().Done():
+		return nil, request.Context().Err()
+	case <-c.release:
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{jsonContentType}},
+			Body:       io.NopCloser(strings.NewReader("[]")),
+		}, nil
+	}
 }
 
 type staticSystemMetricsCollector struct {
@@ -386,12 +527,20 @@ func (c staticSystemMetricsCollector) collect(context.Context) (systemMetrics, e
 type blockingSystemMetricsCollector struct {
 	started     chan struct{}
 	startedOnce sync.Once
+	release     <-chan struct{}
+	values      systemMetrics
+	calls       atomic.Int32
 }
 
 func (c *blockingSystemMetricsCollector) collect(ctx context.Context) (systemMetrics, error) {
+	c.calls.Add(1)
 	c.startedOnce.Do(func() {
 		close(c.started)
 	})
-	<-ctx.Done()
-	return systemMetrics{}, ctx.Err()
+	select {
+	case <-ctx.Done():
+		return systemMetrics{}, ctx.Err()
+	case <-c.release:
+		return c.values, nil
+	}
 }
