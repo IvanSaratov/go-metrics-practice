@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/rsa"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/IvanSaratov/go-metrics-practice/internal/cryptoutil"
 	"github.com/IvanSaratov/go-metrics-practice/internal/model"
 	retryhelper "github.com/IvanSaratov/go-metrics-practice/internal/retry"
 	"github.com/IvanSaratov/go-metrics-practice/internal/signature"
@@ -39,22 +41,25 @@ type HTTPClient interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
-// Client отправляет метрики на сервер в JSON, сжатом gzip.
+// Client отправляет метрики в JSON, сжатом gzip, и шифрует их при заданном публичном ключе.
 type Client struct {
 	baseURL    string
 	httpClient HTTPClient
 	retry      func(context.Context, func(context.Context) error) error
 	key        string
+	publicKey  *rsa.PublicKey
 }
 
 // NewClient создаёт клиент для отправки метрик через httpClient.
 // baseURL — адрес сервера со схемой и без слеша в конце.
 // Если key пустой, запросы не подписываются.
-func NewClient(baseURL string, httpClient HTTPClient, key string) *Client {
+// Если publicKey равен nil, запросы не шифруются.
+func NewClient(baseURL string, httpClient HTTPClient, key string, publicKey *rsa.PublicKey) *Client {
 	return &Client{
 		baseURL:    baseURL,
 		httpClient: httpClient,
 		key:        key,
+		publicKey:  publicKey,
 		retry: func(ctx context.Context, operation func(context.Context) error) error {
 			return retryhelper.Do(ctx, operation)
 		},
@@ -99,6 +104,17 @@ func (c *Client) send(ctx context.Context, path string, payload any) error {
 		return fmt.Errorf("encode metric: %w", err)
 	}
 
+	encoding := gzipEncoding
+	if c.publicKey != nil {
+		// Шифруем после сжатия и до retry.
+		body, err = cryptoutil.Encrypt(c.publicKey, body)
+		if err != nil {
+			return fmt.Errorf("encrypt metric: %w", err)
+		}
+		// Порядок кодировок подсказывает серверу сначала расшифровать, затем распаковать.
+		encoding += ", " + cryptoutil.Encoding
+	}
+
 	if err := c.retry(ctx, func(ctx context.Context) error {
 		req, err := http.NewRequestWithContext(
 			ctx,
@@ -111,10 +127,10 @@ func (c *Client) send(ctx context.Context, path string, payload any) error {
 		}
 		req.Header.Set("Content-Type", jsonContentType)
 		// Выставляем нужные заголовки
-		req.Header.Set("Content-Encoding", gzipEncoding)
+		req.Header.Set("Content-Encoding", encoding)
 		req.Header.Set("Accept-Encoding", gzipEncoding)
 		if c.key != "" {
-			// Подписываем готовое gzip-тело, которое будет отправлено серверу
+			// Подписываем итоговое тело: при включённом шифровании это уже шифротекст.
 			req.Header.Set(signature.HeaderName, signature.Sum(body, c.key))
 		}
 

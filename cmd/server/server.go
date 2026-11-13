@@ -8,9 +8,9 @@ import (
 	"net"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/IvanSaratov/go-metrics-practice/internal/config/db"
+	"github.com/IvanSaratov/go-metrics-practice/internal/cryptoutil"
 	"github.com/IvanSaratov/go-metrics-practice/internal/handler"
 	"github.com/IvanSaratov/go-metrics-practice/internal/repository"
 	"go.uber.org/zap"
@@ -22,6 +22,12 @@ func runServer(
 	config serverConfig,
 	appLogger *zap.Logger,
 ) (resultErr error) {
+	// Проверяем ключ до открытия БД и HTTP-порта.
+	privateKey, err := cryptoutil.LoadPrivateKey(config.cryptoKeyPath)
+	if err != nil {
+		return fmt.Errorf("load private key: %w", err)
+	}
+
 	var database *sql.DB
 	databaseDSN := strings.TrimSpace(config.databaseDSN)
 	if databaseDSN != "" {
@@ -83,13 +89,13 @@ func runServer(
 		}()
 	}
 
-	requests := &drainingHandler{next: withMiddleware(router, appLogger, config.key)}
+	requests := &drainingHandler{next: withMiddleware(router, appLogger, config.key, privateKey)}
 	server := &http.Server{
 		Addr:    config.address,
 		Handler: requests,
 	}
 	defer func() {
-		// При таймауте Shutdown закрываем соединения и ждём обработчиков.
+		// При ошибке Serve освобождаем соединения и ждём выхода обработчиков.
 		if err := server.Close(); err != nil {
 			resultErr = errors.Join(resultErr, fmt.Errorf("close HTTP server: %w", err))
 		}
@@ -115,10 +121,8 @@ func runServer(
 		appLogger.Info("shutdown requested")
 	}
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	shutdownErr := server.Shutdown(shutdownCtx)
+	// Дожидаемся активных запросов перед финальным сохранением метрик.
+	shutdownErr := server.Shutdown(context.Background())
 	// Не теряем ошибку Serve, если остановка уже началась.
 	serveErr := <-serveErrors
 

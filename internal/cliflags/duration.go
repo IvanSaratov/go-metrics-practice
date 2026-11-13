@@ -3,6 +3,7 @@ package cliflags
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 )
@@ -30,6 +31,10 @@ func (d *Duration) Set(value string) error {
 	if secondsErr != nil {
 		return fmt.Errorf("invalid duration %q", value)
 	}
+	// Проверяем границы до умножения, чтобы длительность не переполнилась.
+	if seconds > math.MaxInt64/int64(time.Second) || seconds < math.MinInt64/int64(time.Second) {
+		return fmt.Errorf("invalid duration %q: seconds are out of range", value)
+	}
 
 	d.value = time.Duration(seconds) * time.Second
 	return nil
@@ -38,6 +43,11 @@ func (d *Duration) Set(value string) error {
 // String возвращает длительность строкой, например "2s".
 func (d *Duration) String() string {
 	return d.value.String()
+}
+
+// Get возвращает сам объект, чтобы cli.Command.Generic мог прочитать Duration.
+func (d *Duration) Get() any {
+	return d
 }
 
 // Duration возвращает сохранённую длительность.

@@ -23,6 +23,16 @@ func TestDurationSet(t *testing.T) {
 			value: "7",
 			want:  7 * time.Second,
 		},
+		{
+			name:  "largest whole seconds",
+			value: "9223372036",
+			want:  9223372036 * time.Second,
+		},
+		{
+			name:  "smallest whole seconds",
+			value: "-9223372036",
+			want:  -9223372036 * time.Second,
+		},
 	}
 
 	for _, tt := range tests {
@@ -38,9 +48,14 @@ func TestDurationSet(t *testing.T) {
 }
 
 func TestDurationSetRejectsInvalidValue(t *testing.T) {
-	duration := NewDuration(time.Second)
+	for _, value := range []string{"invalid", "9223372037", "-9223372037", "18446744073", "-18446744073"} {
+		t.Run(value, func(t *testing.T) {
+			duration := NewDuration(time.Second)
 
-	err := duration.Set("invalid")
+			err := duration.Set(value)
 
-	require.Error(t, err)
+			require.Error(t, err)
+			require.Equal(t, time.Second, duration.Duration())
+		})
+	}
 }

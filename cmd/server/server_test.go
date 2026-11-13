@@ -34,6 +34,32 @@ func TestRunServerRejectsInvalidDatabaseDSNBeforeListening(t *testing.T) {
 	require.NotContains(t, err.Error(), "listen on")
 }
 
+func TestRunServerRejectsInvalidCryptoKeyBeforeListening(t *testing.T) {
+	invalidKeyPath := filepath.Join(t.TempDir(), "invalid.pem")
+	require.NoError(t, os.WriteFile(invalidKeyPath, []byte("not a PEM key"), 0o600))
+	for _, tt := range []struct {
+		name        string
+		keyPath     string
+		databaseDSN string
+	}{
+		{"missing key", filepath.Join(t.TempDir(), "missing.pem"), ""},
+		{"invalid key", invalidKeyPath, ""},
+		{"key checked before database", invalidKeyPath, "postgres://%"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			err := runServer(context.Background(), serverConfig{
+				address:       "127.0.0.1:-1",
+				cryptoKeyPath: tt.keyPath,
+				databaseDSN:   tt.databaseDSN,
+			}, zap.NewNop())
+
+			require.ErrorContains(t, err, "load private key")
+			require.NotContains(t, err.Error(), "listen on")
+			require.NotContains(t, err.Error(), "open database")
+		})
+	}
+}
+
 func TestRunServerRestoresBeforeListening(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "metrics-db.json")
 	require.NoError(t, os.WriteFile(path, []byte(`{"invalid":`), 0o600))
@@ -91,6 +117,19 @@ func TestRunServerShutsDownWhenContextCancelled(t *testing.T) {
 		"shutdown requested",
 		"server stopped",
 	}, messages)
+}
+
+func TestRunServerReturnsFinalSaveError(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	err := runServer(ctx, serverConfig{
+		address:         "127.0.0.1:0",
+		storeInterval:   time.Hour,
+		fileStoragePath: t.TempDir(), // Каталог нельзя заменить файлом с метриками.
+	}, zap.NewNop())
+
+	require.ErrorContains(t, err, "save metrics on shutdown")
 }
 
 func TestRunServerRejectsInvalidAuditBeforeListening(t *testing.T) {
