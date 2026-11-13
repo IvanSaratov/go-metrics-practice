@@ -3,6 +3,7 @@ package cliflags
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 )
@@ -29,6 +30,10 @@ func (d *Duration) Set(value string) error {
 	seconds, secondsErr := strconv.ParseInt(value, 10, 64)
 	if secondsErr != nil {
 		return fmt.Errorf("invalid duration %q", value)
+	}
+	// Проверяем границы до умножения, чтобы длительность не переполнилась.
+	if seconds > math.MaxInt64/int64(time.Second) || seconds < math.MinInt64/int64(time.Second) {
+		return fmt.Errorf("invalid duration %q: seconds are out of range", value)
 	}
 
 	d.value = time.Duration(seconds) * time.Second

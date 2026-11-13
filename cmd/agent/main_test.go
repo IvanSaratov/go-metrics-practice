@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,9 +13,7 @@ import (
 )
 
 func TestRunReturnsExitCodes(t *testing.T) {
-	for _, name := range []string{"ADDRESS", "POLL_INTERVAL", "REPORT_INTERVAL", "TIMEOUT", "KEY", "CRYPTO_KEY", "RATE_LIMIT"} {
-		t.Setenv(name, "")
-	}
+	clearAgentConfigEnv(t)
 
 	for _, tt := range []struct {
 		name     string
@@ -77,9 +76,7 @@ func TestMainExitCodes(t *testing.T) {
 }
 
 func TestAgentAppUsesDefaults(t *testing.T) {
-	t.Setenv("KEY", "")
-	t.Setenv("CRYPTO_KEY", "")
-	t.Setenv("RATE_LIMIT", "")
+	clearAgentConfigEnv(t)
 
 	var got agentConfig
 	app := newAgentApp(func(config agentConfig) error {
@@ -142,9 +139,7 @@ func TestAgentAppParsesFlags(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv("KEY", "")
-			t.Setenv("CRYPTO_KEY", "")
-			t.Setenv("RATE_LIMIT", "")
+			clearAgentConfigEnv(t)
 
 			var got agentConfig
 			app := newAgentApp(func(config agentConfig) error {
@@ -171,6 +166,7 @@ func TestAgentAppParsesEnvs(t *testing.T) {
 		name               string
 		args               []string
 		env                map[string]string
+		json               string
 		wantAddress        string
 		wantPollInterval   time.Duration
 		wantReportInterval time.Duration
@@ -180,8 +176,9 @@ func TestAgentAppParsesEnvs(t *testing.T) {
 		wantRateLimit      int
 	}{
 		{
-			name: "env overrides defaults",
+			name: "env overrides JSON",
 			args: []string{"agent"},
+			json: agentJSONConfig,
 			env: map[string]string{
 				"ADDRESS":         "localhost:9090",
 				"POLL_INTERVAL":   "5s",
@@ -200,8 +197,9 @@ func TestAgentAppParsesEnvs(t *testing.T) {
 			wantRateLimit:      5,
 		},
 		{
-			name: "flag overrides env",
+			name: "flag overrides env and JSON",
 			args: []string{"agent", "-a", "localhost:7777", "-p", "3", "-r", "7s", "-t", "10s", "-k", "flag-secret", "-crypto-key", "flag-public.pem", "-l", "3"},
+			json: agentJSONConfig,
 			env: map[string]string{
 				"ADDRESS":         "localhost:9090",
 				"POLL_INTERVAL":   "5s",
@@ -249,11 +247,13 @@ func TestAgentAppParsesEnvs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv("KEY", "")
-			t.Setenv("CRYPTO_KEY", "")
-			t.Setenv("RATE_LIMIT", "")
+			clearAgentConfigEnv(t)
 			for k, v := range tt.env {
 				t.Setenv(k, v)
+			}
+			args := tt.args
+			if tt.json != "" {
+				args = append(args, "-c", writeAgentConfigFile(t, tt.json))
 			}
 
 			var got agentConfig
@@ -262,7 +262,7 @@ func TestAgentAppParsesEnvs(t *testing.T) {
 				return nil
 			})
 
-			err := app.Run(t.Context(), tt.args)
+			err := app.Run(t.Context(), args)
 
 			require.NoError(t, err)
 			require.Equal(t, tt.wantAddress, got.serverAddress)
@@ -276,26 +276,44 @@ func TestAgentAppParsesEnvs(t *testing.T) {
 	}
 }
 
-func TestAgentAppRejectsNonPositiveRateLimit(t *testing.T) {
-	t.Setenv("RATE_LIMIT", "")
+func TestAgentAppRejectsNonPositiveValues(t *testing.T) {
+	for _, tt := range []struct {
+		flag string
+		env  string
+		err  string
+	}{
+		{flag: "-l", env: "RATE_LIMIT", err: "rate limit must be positive"},
+		{flag: "-p", env: "POLL_INTERVAL", err: "poll interval must be positive"},
+		{flag: "-r", env: "REPORT_INTERVAL", err: "report interval must be positive"},
+	} {
+		for _, value := range []string{"0", "-1"} {
+			for _, source := range []string{"flag", "env"} {
+				t.Run(tt.env+"/"+value+"/"+source, func(t *testing.T) {
+					clearAgentConfigEnv(t)
+					args := []string{"agent"}
+					if source == "env" {
+						t.Setenv(tt.env, value)
+					} else {
+						args = append(args, tt.flag, value)
+					}
+					runCalled := false
+					app := newAgentApp(func(config agentConfig) error {
+						runCalled = true
+						return nil
+					})
 
-	for _, value := range []string{"0", "-1"} {
-		t.Run(value, func(t *testing.T) {
-			runCalled := false
-			app := newAgentApp(func(config agentConfig) error {
-				runCalled = true
-				return nil
-			})
+					err := app.Run(t.Context(), args)
 
-			err := app.Run(t.Context(), []string{"agent", "-l", value})
-
-			require.ErrorContains(t, err, "rate limit must be positive")
-			require.False(t, runCalled)
-		})
+					require.ErrorContains(t, err, tt.err)
+					require.False(t, runCalled)
+				})
+			}
+		}
 	}
 }
 
 func TestAgentAppRejectsUnknownFlag(t *testing.T) {
+	clearAgentConfigEnv(t)
 	app := newAgentApp(func(config agentConfig) error {
 		return nil
 	})
@@ -304,4 +322,213 @@ func TestAgentAppRejectsUnknownFlag(t *testing.T) {
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "flag provided but not defined")
+}
+
+const agentJSONConfig = `{
+	"address": "file:8080",
+	"poll_interval": "500ms",
+	"report_interval": "1500ms",
+	"timeout": "3s",
+	"key": "file-secret",
+	"crypto_key": "file-public.pem",
+	"rate_limit": 2
+}`
+
+func TestAgentAppJSONConfig(t *testing.T) {
+	defaults := agentConfig{
+		serverAddress: "localhost:8080", pollInterval: 2 * time.Second,
+		reportInterval: 10 * time.Second, timeout: 30 * time.Second, rateLimit: 1,
+	}
+	partial := defaults
+	partial.cryptoKeyPath = "file.pem"
+	emptyValues := agentConfig{
+		pollInterval: 500 * time.Millisecond, reportInterval: 1500 * time.Millisecond, rateLimit: 2,
+	}
+
+	for _, tt := range []struct {
+		name string
+		json string
+		env  map[string]string
+		args []string
+		want agentConfig
+	}{
+		{
+			name: "all options", json: agentJSONConfig,
+			want: agentConfig{
+				serverAddress: "file:8080", pollInterval: 500 * time.Millisecond,
+				reportInterval: 1500 * time.Millisecond, timeout: 3 * time.Second,
+				key: "file-secret", cryptoKeyPath: "file-public.pem", rateLimit: 2,
+			},
+		},
+		{name: "empty object", json: `{}`, want: defaults},
+		{name: "partial object", json: `{"crypto_key":"file.pem"}`, want: partial},
+		{
+			name: "zero timeout and empty strings",
+			json: `{"address":"","poll_interval":"500ms","report_interval":"1500ms","timeout":"0s","key":"","crypto_key":"","rate_limit":2}`,
+			want: emptyValues,
+		},
+		{
+			name: "empty environment overrides file", json: agentJSONConfig,
+			env:  map[string]string{"ADDRESS": "", "KEY": "", "CRYPTO_KEY": "", "TIMEOUT": "0"},
+			want: emptyValues,
+		},
+		{
+			name: "empty flags override file", json: agentJSONConfig,
+			args: []string{"-a=", "-k=", "-crypto-key=", "-t", "0"},
+			want: emptyValues,
+		},
+		{
+			name: "flags override invalid values",
+			json: `{"poll_interval":"invalid","report_interval":"invalid","timeout":"invalid","rate_limit":"invalid"}`,
+			args: []string{"-p", "2", "-r", "10", "-t", "30", "-l", "1"}, want: defaults,
+		},
+		{
+			name: "environment overrides nonpositive values",
+			json: `{"poll_interval":"0s","report_interval":"-1s","rate_limit":0}`,
+			env:  map[string]string{"POLL_INTERVAL": "2s", "REPORT_INTERVAL": "10s", "RATE_LIMIT": "1"}, want: defaults,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			clearAgentConfigEnv(t)
+			for name, value := range tt.env {
+				t.Setenv(name, value)
+			}
+			var got agentConfig
+			runCalled := false
+			app := newAgentApp(func(config agentConfig) error {
+				got = config
+				runCalled = true
+				return nil
+			})
+			args := []string{"agent", "-config", writeAgentConfigFile(t, tt.json)}
+
+			err := app.Run(t.Context(), append(args, tt.args...))
+
+			require.NoError(t, err)
+			require.True(t, runCalled)
+			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestAgentAppConfigPath(t *testing.T) {
+	file := writeAgentConfigFile(t, `{"address":"file:8080"}`)
+	missing := filepath.Join(t.TempDir(), "missing.json")
+	for _, tt := range []struct {
+		name string
+		args []string
+		env  string
+		want string
+	}{
+		{name: "short flag", args: []string{"-c", file}, want: "file:8080"},
+		{name: "long flag", args: []string{"-config", file}, want: "file:8080"},
+		{name: "double dash", args: []string{"--config", file}, want: "file:8080"},
+		{name: "environment", env: file, want: "file:8080"},
+		{name: "flag overrides environment", env: missing, args: []string{"-c", file}, want: "file:8080"},
+		{name: "empty flag disables file", env: missing, args: []string{"-config="}, want: "localhost:8080"},
+		{name: "config after another flag", args: []string{"-p", "1s", "-config", file}, want: "file:8080"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			clearAgentConfigEnv(t)
+			t.Setenv("CONFIG", tt.env)
+			var got agentConfig
+			app := newAgentApp(func(config agentConfig) error {
+				got = config
+				return nil
+			})
+
+			err := app.Run(t.Context(), append([]string{"agent"}, tt.args...))
+
+			require.NoError(t, err)
+			require.Equal(t, tt.want, got.serverAddress)
+		})
+	}
+}
+
+func TestAgentAppRejectsInvalidConfig(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		file    string
+		args    []string
+		wantErr string
+	}{
+		{name: "missing file", file: filepath.Join(t.TempDir(), "missing.json")},
+		{name: "directory", file: t.TempDir()},
+		{name: "empty file", file: writeAgentConfigFile(t, "")},
+		{name: "invalid JSON", file: writeAgentConfigFile(t, `{"address":`)},
+		{name: "YAML is not JSON", file: writeAgentConfigFile(t, "address: file:8080")},
+		{name: "null", file: writeAgentConfigFile(t, `null`)},
+		{name: "array", file: writeAgentConfigFile(t, `[]`)},
+		{name: "scalar", file: writeAgentConfigFile(t, `"file:8080"`)},
+		{name: "duplicate keys", file: writeAgentConfigFile(t, `{"address":"first","address":"second"}`)},
+		{name: "invalid poll interval", file: writeAgentConfigFile(t, `{"poll_interval":"invalid"}`)},
+		{name: "invalid report interval", file: writeAgentConfigFile(t, `{"report_interval":"invalid"}`)},
+		{name: "invalid timeout", file: writeAgentConfigFile(t, `{"timeout":"invalid"}`)},
+		{name: "invalid rate limit", file: writeAgentConfigFile(t, `{"rate_limit":1.5}`)},
+		{name: "zero poll interval", file: writeAgentConfigFile(t, `{"poll_interval":"0s"}`), wantErr: "poll interval must be positive"},
+		{name: "negative poll interval", file: writeAgentConfigFile(t, `{"poll_interval":"-1s"}`), wantErr: "poll interval must be positive"},
+		{name: "zero report interval", file: writeAgentConfigFile(t, `{"report_interval":"0s"}`), wantErr: "report interval must be positive"},
+		{name: "negative report interval", file: writeAgentConfigFile(t, `{"report_interval":"-1s"}`), wantErr: "report interval must be positive"},
+		{name: "zero rate limit", file: writeAgentConfigFile(t, `{"rate_limit":0}`), wantErr: "rate limit must be positive"},
+		{name: "negative rate limit", file: writeAgentConfigFile(t, `{"rate_limit":-1}`), wantErr: "rate limit must be positive"},
+		{
+			name: "invalid file with all options overridden", file: writeAgentConfigFile(t, `{`),
+			args: []string{"-a=", "-p", "2", "-r", "10", "-t", "30", "-k=", "-crypto-key=", "-l", "1"},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			clearAgentConfigEnv(t)
+			runCalled := false
+			app := newAgentApp(func(config agentConfig) error {
+				runCalled = true
+				return nil
+			})
+			args := []string{"agent", "-config", tt.file}
+
+			err := app.Run(t.Context(), append(args, tt.args...))
+
+			wantErr := tt.wantErr
+			if wantErr == "" {
+				wantErr = tt.file
+			}
+			require.ErrorContains(t, err, wantErr)
+			require.False(t, runCalled)
+		})
+	}
+}
+
+func TestAgentAppConfigHelp(t *testing.T) {
+	for _, args := range [][]string{{"--help"}, {"-config", "missing.json", "--help"}} {
+		t.Run(args[0], func(t *testing.T) {
+			clearAgentConfigEnv(t)
+			t.Setenv("CONFIG", filepath.Join(t.TempDir(), "missing.json"))
+			runCalled := false
+			app := newAgentApp(func(config agentConfig) error {
+				runCalled = true
+				return nil
+			})
+			app.Writer = io.Discard
+
+			err := app.Run(t.Context(), append([]string{"agent"}, args...))
+
+			require.NoError(t, err)
+			require.False(t, runCalled)
+		})
+	}
+}
+
+func clearAgentConfigEnv(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{"CONFIG", "ADDRESS", "POLL_INTERVAL", "REPORT_INTERVAL", "TIMEOUT", "KEY", "CRYPTO_KEY", "RATE_LIMIT"} {
+		// Setenv восстановит окружение после теста, Unsetenv убирает источник.
+		t.Setenv(name, "")
+		require.NoError(t, os.Unsetenv(name))
+	}
+}
+
+func writeAgentConfigFile(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.json")
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+	return path
 }

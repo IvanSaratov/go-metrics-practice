@@ -278,22 +278,31 @@ func TestServerAppStoreInterval(t *testing.T) {
 	clearServerConfigEnv(t)
 	t.Setenv("STORE_INTERVAL", "20")
 
-	for _, value := range []string{"0", "-1"} {
-		t.Run(value, func(t *testing.T) {
+	for _, tt := range []struct {
+		value   string
+		wantErr string
+	}{
+		{value: "0"},
+		{value: "-1", wantErr: "store interval must not be negative"},
+		{value: "-18446744073", wantErr: "invalid duration"},
+	} {
+		t.Run(tt.value, func(t *testing.T) {
 			runCalled := false
+			var got serverConfig
 			app := newServerApp(func(config serverConfig) error {
 				runCalled = true
-				require.Zero(t, config.storeInterval)
+				got = config
 				return nil
 			})
 
-			err := app.Run(t.Context(), []string{"server", "-i", value})
+			err := app.Run(t.Context(), []string{"server", "-i", tt.value})
 
-			if value == "0" {
+			if tt.wantErr == "" {
 				require.NoError(t, err)
 				require.True(t, runCalled)
+				require.Zero(t, got.storeInterval)
 			} else {
-				require.ErrorContains(t, err, "store interval must not be negative")
+				require.ErrorContains(t, err, tt.wantErr)
 				require.False(t, runCalled)
 			}
 		})
