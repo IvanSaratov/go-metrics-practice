@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/IvanSaratov/go-metrics-practice/internal/config/db"
 	"github.com/IvanSaratov/go-metrics-practice/internal/cryptoutil"
@@ -96,7 +95,7 @@ func runServer(
 		Handler: requests,
 	}
 	defer func() {
-		// При таймауте Shutdown закрываем соединения и ждём обработчиков.
+		// При ошибке Serve освобождаем соединения и ждём выхода обработчиков.
 		if err := server.Close(); err != nil {
 			resultErr = errors.Join(resultErr, fmt.Errorf("close HTTP server: %w", err))
 		}
@@ -122,10 +121,8 @@ func runServer(
 		appLogger.Info("shutdown requested")
 	}
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	shutdownErr := server.Shutdown(shutdownCtx)
+	// Дожидаемся активных запросов перед финальным сохранением метрик.
+	shutdownErr := server.Shutdown(context.Background())
 	// Не теряем ошибку Serve, если остановка уже началась.
 	serveErr := <-serveErrors
 

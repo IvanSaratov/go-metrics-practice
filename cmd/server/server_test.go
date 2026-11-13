@@ -119,6 +119,19 @@ func TestRunServerShutsDownWhenContextCancelled(t *testing.T) {
 	}, messages)
 }
 
+func TestRunServerReturnsFinalSaveError(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	err := runServer(ctx, serverConfig{
+		address:         "127.0.0.1:0",
+		storeInterval:   time.Hour,
+		fileStoragePath: t.TempDir(), // Каталог нельзя заменить файлом с метриками.
+	}, zap.NewNop())
+
+	require.ErrorContains(t, err, "save metrics on shutdown")
+}
+
 func TestRunServerRejectsInvalidAuditBeforeListening(t *testing.T) {
 	err := runServer(context.Background(), serverConfig{address: "127.0.0.1:-1", auditURL: "/audit"}, zap.NewNop())
 
