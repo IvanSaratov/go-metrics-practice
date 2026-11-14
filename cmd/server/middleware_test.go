@@ -115,6 +115,24 @@ func TestServerHandlerProvidesDatabasePing(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.Code)
 }
 
+func TestServerHandlerRejectsEncryptedRequestWithoutKey(t *testing.T) {
+	for _, encodings := range [][]string{
+		{"gzip, " + cryptoutil.Encoding},
+		{"identity", cryptoutil.Encoding},
+	} {
+		t.Run(strings.Join(encodings, ";"), func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/update", strings.NewReader(`{"id":"Alloc","type":"gauge","value":3}`))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header["Content-Encoding"] = encodings
+			response := httptest.NewRecorder()
+
+			newTestHandler(repository.NewMemStorage(), zap.NewNop(), "", nil).ServeHTTP(response, request)
+
+			require.Equal(t, http.StatusUnsupportedMediaType, response.Code)
+		})
+	}
+}
+
 func TestServerHandlerRejectsCorruptedGzipRequest(t *testing.T) {
 	payload := []byte(`{"id":"TestGauge","type":"gauge","value":67.1}`)
 	var compressed bytes.Buffer

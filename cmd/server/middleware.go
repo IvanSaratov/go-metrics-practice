@@ -8,7 +8,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// Запрос проходит проверку подписи, расшифровку, затем распаковку gzip.
+// После проверки подписи расшифровываем запрос при наличии ключа, затем распаковываем gzip.
 // Ответ подписываем после сжатия.
 func withMiddleware(
 	next http.Handler,
@@ -16,11 +16,10 @@ func withMiddleware(
 	key string,
 	privateKey *rsa.PrivateKey,
 ) http.Handler {
-	return handlermiddleware.LoggingMiddleware(appLogger)(
-		handlermiddleware.SignatureMiddleware(key)(
-			handlermiddleware.CryptoMiddleware(privateKey)(
-				handlermiddleware.GzipMiddleware(next),
-			),
-		),
-	)
+	next = handlermiddleware.GzipMiddleware(next)
+	if privateKey != nil {
+		next = handlermiddleware.CryptoMiddleware(privateKey)(next)
+	}
+	next = handlermiddleware.SignatureMiddleware(key)(next)
+	return handlermiddleware.LoggingMiddleware(appLogger)(next)
 }
