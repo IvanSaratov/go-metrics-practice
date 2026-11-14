@@ -13,6 +13,7 @@ import (
 
 type serverConfig struct {
 	address         string
+	shutdownTimeout time.Duration
 	storeInterval   time.Duration
 	fileStoragePath string
 	restore         bool
@@ -49,6 +50,15 @@ func newServerApp(run func(config serverConfig) error) *cli.Command {
 			),
 			Value: "localhost:8080",
 			Usage: "HTTP server address",
+		},
+		&cli.GenericFlag{
+			Name: "shutdown-timeout",
+			Sources: cli.NewValueSourceChain(
+				cli.EnvVar("SHUTDOWN_TIMEOUT"),
+				altsrcjson.JSON("shutdown_timeout", jsonSource),
+			),
+			Value: cliflags.NewDuration(5 * time.Second),
+			Usage: "Время ожидания активных HTTP-запросов при остановке",
 		},
 		&cli.GenericFlag{
 			Name:    "store-interval",
@@ -125,6 +135,10 @@ func newServerApp(run func(config serverConfig) error) *cli.Command {
 		},
 	}
 	app.Action = func(_ context.Context, cmd *cli.Command) error {
+		shutdownTimeout := cmd.Generic("shutdown-timeout").(*cliflags.Duration).Duration()
+		if shutdownTimeout <= 0 {
+			return fmt.Errorf("shutdown timeout must be positive")
+		}
 		storeInterval := cmd.Generic("store-interval").(*cliflags.Duration).Duration()
 		if storeInterval < 0 {
 			return fmt.Errorf("store interval must not be negative")
@@ -132,6 +146,7 @@ func newServerApp(run func(config serverConfig) error) *cli.Command {
 
 		return run(serverConfig{
 			address:         cmd.String("address"),
+			shutdownTimeout: shutdownTimeout,
 			storeInterval:   storeInterval,
 			fileStoragePath: cmd.String("file-storage-path"),
 			restore:         cmd.Bool("restore"),

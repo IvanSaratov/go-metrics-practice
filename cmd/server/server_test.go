@@ -1,12 +1,19 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/IvanSaratov/go-metrics-practice/internal/audit"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -83,6 +90,7 @@ func TestRunServerUsesMemoryWithoutDatabaseOrFile(t *testing.T) {
 
 	err := runServer(ctx, serverConfig{
 		address:         "127.0.0.1:0",
+		shutdownTimeout: time.Second,
 		fileStoragePath: "",
 		restore:         true,
 	}, zap.NewNop())
@@ -99,6 +107,7 @@ func TestRunServerShutsDownWhenContextCancelled(t *testing.T) {
 
 	err := runServer(ctx, serverConfig{
 		address:         "127.0.0.1:0",
+		shutdownTimeout: time.Second,
 		storeInterval:   300 * time.Second,
 		fileStoragePath: storagePath,
 		restore:         false,
@@ -119,12 +128,93 @@ func TestRunServerShutsDownWhenContextCancelled(t *testing.T) {
 	}, messages)
 }
 
+func TestRunServerShutsDownWithActiveRequest(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		completeBody bool
+		timeout      time.Duration
+	}{
+		{"request completes", true, 5 * time.Second},
+		{"request stalls", false, 20 * time.Millisecond},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			config := serverConfig{
+				address: "127.0.0.1:0", shutdownTimeout: tt.timeout,
+				storeInterval: time.Hour, fileStoragePath: filepath.Join(dir, "metrics.json"),
+				auditFile: filepath.Join(dir, "audit.jsonl"),
+			}
+			core, logs := observer.New(zap.InfoLevel)
+			ctx, stop := context.WithCancel(t.Context())
+			defer stop()
+			done := make(chan error, 1)
+			go func() { done <- runServer(ctx, config, zap.New(core)) }()
+
+			waitForLog := func(message string) observer.LoggedEntry {
+				t.Helper()
+				require.Eventually(t, func() bool {
+					return logs.FilterMessage(message).Len() != 0
+				}, time.Second, time.Millisecond)
+				return logs.FilterMessage(message).All()[0]
+			}
+			address := waitForLog("server started").ContextMap()["address"].(string)
+			conn, err := net.DialTimeout("tcp", address, time.Second)
+			require.NoError(t, err)
+			defer conn.Close()
+			require.NoError(t, conn.SetDeadline(time.Now().Add(3*time.Second)))
+
+			// Ответ 100 Continue подтверждает, что обработчик уже ждёт тело запроса.
+			body := `{"id":"Alloc","type":"gauge","value":67.1}`
+			_, err = fmt.Fprintf(conn, "POST /update HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: %d\r\nExpect: 100-continue\r\n\r\n", len(body))
+			require.NoError(t, err)
+			reader := bufio.NewReader(conn)
+			resp, err := http.ReadResponse(reader, nil)
+			require.NoError(t, err)
+			resp.Body.Close()
+			require.Equal(t, http.StatusContinue, resp.StatusCode)
+
+			stop()
+			if tt.completeBody {
+				waitForLog("shutdown requested")
+				_, err = io.WriteString(conn, body)
+				require.NoError(t, err)
+				resp, err = http.ReadResponse(reader, nil)
+				require.NoError(t, err)
+				resp.Body.Close()
+				require.Equal(t, http.StatusOK, resp.StatusCode)
+			}
+			select {
+			case err := <-done:
+				if !tt.completeBody {
+					require.ErrorIs(t, err, context.DeadlineExceeded)
+					_, err = reader.ReadByte()
+					require.ErrorIs(t, err, io.EOF)
+					return
+				}
+				require.NoError(t, err)
+			case <-time.After(2 * time.Second):
+				t.Fatal("server did not stop")
+			}
+
+			metrics, err := os.ReadFile(config.fileStoragePath)
+			require.NoError(t, err)
+			require.JSONEq(t, "["+body+"]", string(metrics))
+			data, err := os.ReadFile(config.auditFile)
+			require.NoError(t, err)
+			var event audit.Event
+			require.NoError(t, json.Unmarshal(data, &event))
+			require.Equal(t, []string{"Alloc"}, event.Metrics)
+		})
+	}
+}
+
 func TestRunServerReturnsFinalSaveError(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	err := runServer(ctx, serverConfig{
 		address:         "127.0.0.1:0",
+		shutdownTimeout: time.Second,
 		storeInterval:   time.Hour,
 		fileStoragePath: t.TempDir(), // Каталог нельзя заменить файлом с метриками.
 	}, zap.NewNop())

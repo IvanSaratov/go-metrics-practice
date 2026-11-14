@@ -89,50 +89,41 @@ func runServer(
 		}()
 	}
 
-	requests := &drainingHandler{next: withMiddleware(router, appLogger, config.key, privateKey)}
 	server := &http.Server{
 		Addr:    config.address,
-		Handler: requests,
+		Handler: withMiddleware(router, appLogger, config.key, privateKey),
 	}
-	defer func() {
-		// При ошибке Serve освобождаем соединения и ждём выхода обработчиков.
-		if err := server.Close(); err != nil {
-			resultErr = errors.Join(resultErr, fmt.Errorf("close HTTP server: %w", err))
-		}
-		requests.wait()
-	}()
 
-	// Чтобы Serve не ждал, пока мы закончим Shutdown.
-	serveErrors := make(chan error, 1)
+	serveDone := make(chan struct{})
+	var serveErr error
 	go func() {
-		serveErrors <- server.Serve(listener)
+		serveErr = server.Serve(listener)
+		close(serveDone)
 	}()
 
 	appLogger.Info("server started", zap.String("address", listener.Addr().String()))
 
 	select {
-	case err := <-serveErrors:
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			return fmt.Errorf("serve HTTP: %w", err)
-		}
-		appLogger.Info("server stopped")
-		return nil
+	case <-serveDone:
 	case <-ctx.Done():
 		appLogger.Info("shutdown requested")
 	}
 
-	// Дожидаемся активных запросов перед финальным сохранением метрик.
-	shutdownErr := server.Shutdown(context.Background())
-	// Не теряем ошибку Serve, если остановка уже началась.
-	serveErr := <-serveErrors
-
-	if shutdownErr != nil {
-		return fmt.Errorf("shutdown server: %w", shutdownErr)
+	// Завершаем активные запросы и при сигнале, и при ошибке слушателя.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), config.shutdownTimeout)
+	defer cancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		resultErr = fmt.Errorf("shutdown server: %w", err)
+		if closeErr := server.Close(); closeErr != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("close HTTP server: %w", closeErr))
+		}
 	}
+	<-serveDone
 	if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-		return fmt.Errorf("serve HTTP during shutdown: %w", serveErr)
+		resultErr = errors.Join(resultErr, fmt.Errorf("serve HTTP: %w", serveErr))
 	}
-
-	appLogger.Info("server stopped")
-	return nil
+	if resultErr == nil {
+		appLogger.Info("server stopped")
+	}
+	return resultErr
 }

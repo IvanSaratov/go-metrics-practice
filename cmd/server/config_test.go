@@ -27,6 +27,7 @@ func TestServerAppUsesDefaultAddress(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, "localhost:8080", got.address)
+	require.Equal(t, 5*time.Second, got.shutdownTimeout)
 	require.Equal(t, 300*time.Second, got.storeInterval)
 	require.Equal(t, "./temp/metrics-db.json", got.fileStoragePath)
 	require.True(t, got.restore)
@@ -41,6 +42,7 @@ func TestServerAppParsesFlags(t *testing.T) {
 	clearServerConfigEnv(t)
 	// Флаги должны перекрывать окружение для всех настроек сервера.
 	t.Setenv("ADDRESS", "localhost:7070")
+	t.Setenv("SHUTDOWN_TIMEOUT", "2s")
 	t.Setenv("STORE_INTERVAL", "20")
 	t.Setenv("FILE_STORAGE_PATH", "./env/metrics.json")
 	t.Setenv("RESTORE", "true")
@@ -59,6 +61,7 @@ func TestServerAppParsesFlags(t *testing.T) {
 	err := app.Run(t.Context(), []string{
 		"server",
 		"-a", "localhost:9090",
+		"-shutdown-timeout", "750ms",
 		"-i", "15",
 		"-f", "./custom/metrics.json",
 		"-r=false",
@@ -72,6 +75,7 @@ func TestServerAppParsesFlags(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, "localhost:9090", got.address)
+	require.Equal(t, 750*time.Millisecond, got.shutdownTimeout)
 	require.Equal(t, 15*time.Second, got.storeInterval)
 	require.Equal(t, "./custom/metrics.json", got.fileStoragePath)
 	require.False(t, got.restore)
@@ -89,6 +93,7 @@ func TestServerAppParsesFlags(t *testing.T) {
 func TestServerAppParsesEnv(t *testing.T) {
 	clearServerConfigEnv(t)
 	t.Setenv("ADDRESS", "localhost:9090")
+	t.Setenv("SHUTDOWN_TIMEOUT", "2s")
 	t.Setenv("STORE_INTERVAL", "20")
 	t.Setenv("FILE_STORAGE_PATH", "./env/metrics.json")
 	t.Setenv("RESTORE", "false")
@@ -111,6 +116,7 @@ func TestServerAppParsesEnv(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "localhost:9090", got.address)
 	require.Equal(t, 20*time.Second, got.storeInterval)
+	require.Equal(t, 2*time.Second, got.shutdownTimeout)
 	require.Equal(t, "./env/metrics.json", got.fileStoragePath)
 	require.False(t, got.restore)
 	require.Equal(
@@ -323,6 +329,7 @@ func TestServerAppRejectsUnknownFlag(t *testing.T) {
 
 const serverJSONConfig = `{
 	"address": "file:8080",
+	"shutdown_timeout": "3s",
 	"restore": true,
 	"store_interval": "500ms",
 	"store_file": "./file/metrics.json",
@@ -336,6 +343,7 @@ const serverJSONConfig = `{
 func TestServerAppJSONConfig(t *testing.T) {
 	defaults := serverConfig{
 		address: "localhost:8080", storeInterval: 300 * time.Second,
+		shutdownTimeout: 5 * time.Second,
 		fileStoragePath: "./temp/metrics-db.json", restore: true,
 	}
 	partial := defaults
@@ -354,6 +362,7 @@ func TestServerAppJSONConfig(t *testing.T) {
 			name: "all options", json: serverJSONConfig,
 			want: serverConfig{
 				address: "file:8080", storeInterval: 500 * time.Millisecond,
+				shutdownTimeout: 3 * time.Second,
 				fileStoragePath: "./file/metrics.json", restore: true,
 				databaseDSN: "postgres://localhost/file-db", key: "file-secret",
 				cryptoKeyPath: "file-private.pem", auditFile: "./file/audit.jsonl",
@@ -365,7 +374,7 @@ func TestServerAppJSONConfig(t *testing.T) {
 		{
 			name: "zero false and empty strings",
 			json: `{"address":"","store_interval":"0s","store_file":"","restore":false}`,
-			want: serverConfig{},
+			want: serverConfig{shutdownTimeout: 5 * time.Second},
 		},
 		{
 			name: "empty environment overrides file", json: serverJSONConfig,
@@ -373,12 +382,12 @@ func TestServerAppJSONConfig(t *testing.T) {
 				"ADDRESS": "", "STORE_INTERVAL": "0", "FILE_STORAGE_PATH": "", "RESTORE": "",
 				"DATABASE_DSN": "", "KEY": "", "CRYPTO_KEY": "", "AUDIT_FILE": "", "AUDIT_URL": "",
 			},
-			want: serverConfig{},
+			want: serverConfig{shutdownTimeout: 3 * time.Second},
 		},
 		{
 			name: "empty flags override file", json: serverJSONConfig,
 			args: []string{"-a=", "-i", "0", "-f=", "-r=false", "-d=", "-k=", "-crypto-key=", "--audit-file=", "--audit-url="},
-			want: serverConfig{},
+			want: serverConfig{shutdownTimeout: 3 * time.Second},
 		},
 		{
 			name: "flags override invalid values", json: `{"store_interval":"invalid","restore":"invalid"}`,
@@ -465,6 +474,7 @@ func TestServerAppRejectsInvalidConfig(t *testing.T) {
 		{name: "invalid duration", file: writeServerConfigFile(t, `{"store_interval":"invalid"}`)},
 		{name: "invalid bool", file: writeServerConfigFile(t, `{"restore":"invalid"}`)},
 		{name: "negative interval", file: writeServerConfigFile(t, `{"store_interval":"-1s"}`), wantErr: "store interval must not be negative"},
+		{name: "zero shutdown timeout", file: writeServerConfigFile(t, `{"shutdown_timeout":"0s"}`), wantErr: "shutdown timeout must be positive"},
 		{
 			name: "invalid file with all options overridden", file: writeServerConfigFile(t, `{`),
 			args: []string{"-a=", "-i", "0", "-f=", "-r=false", "-d=", "-k=", "-crypto-key=", "--audit-file=", "--audit-url="},
@@ -546,7 +556,7 @@ func TestServerAppStoreFileEnvironment(t *testing.T) {
 
 func clearServerConfigEnv(t *testing.T) {
 	t.Helper()
-	for _, name := range []string{"CONFIG", "ADDRESS", "STORE_INTERVAL", "FILE_STORAGE_PATH", "STORE_FILE", "RESTORE", "DATABASE_DSN", "KEY", "CRYPTO_KEY", "AUDIT_FILE", "AUDIT_URL"} {
+	for _, name := range []string{"CONFIG", "ADDRESS", "SHUTDOWN_TIMEOUT", "STORE_INTERVAL", "FILE_STORAGE_PATH", "STORE_FILE", "RESTORE", "DATABASE_DSN", "KEY", "CRYPTO_KEY", "AUDIT_FILE", "AUDIT_URL"} {
 		// Setenv восстановит окружение после теста, Unsetenv убирает источник.
 		t.Setenv(name, "")
 		require.NoError(t, os.Unsetenv(name))
