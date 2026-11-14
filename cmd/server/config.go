@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/IvanSaratov/go-metrics-practice/internal/cliflags"
+	"github.com/IvanSaratov/go-metrics-practice/internal/config"
 	altsrc "github.com/urfave/cli-altsrc/v3"
 	altsrcjson "github.com/urfave/cli-altsrc/v3/json"
 	"github.com/urfave/cli/v3"
@@ -38,7 +39,7 @@ func newServerApp(run func(config serverConfig) error) *cli.Command {
 			Destination: &configPath,
 			Usage:       "Путь к JSON-файлу конфигурации",
 			Action: func(_ context.Context, _ *cli.Command, path string) error {
-				return validateJSONConfig(path)
+				return config.ValidateJSON(path)
 			},
 		},
 		&cli.StringFlag{

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -13,12 +12,12 @@ import (
 	"github.com/IvanSaratov/go-metrics-practice/internal/agent"
 	"github.com/IvanSaratov/go-metrics-practice/internal/buildinfo"
 	"github.com/IvanSaratov/go-metrics-practice/internal/cliflags"
+	"github.com/IvanSaratov/go-metrics-practice/internal/config"
 	"github.com/IvanSaratov/go-metrics-practice/internal/cryptoutil"
 	log "github.com/sirupsen/logrus"
 	altsrc "github.com/urfave/cli-altsrc/v3"
 	altsrcjson "github.com/urfave/cli-altsrc/v3/json"
 	"github.com/urfave/cli/v3"
-	"gopkg.in/yaml.v3"
 )
 
 var (
@@ -57,27 +56,6 @@ func run(args []string) int {
 	return 0
 }
 
-// validateJSONConfig проверяет файл, поскольку altsrc скрывает ошибки чтения.
-func validateJSONConfig(path string) error {
-	if path == "" {
-		return nil
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("read config %q: %w", path, err)
-	}
-	if !json.Valid(data) {
-		return fmt.Errorf("config %q contains invalid JSON", path)
-	}
-
-	// JSON-источник altsrc использует YAML-парсер. Проверяем, что он примет объект.
-	var config map[any]any
-	if err := yaml.Unmarshal(data, &config); err != nil || config == nil {
-		return fmt.Errorf("config %q must contain a JSON object without duplicate keys", path)
-	}
-	return nil
-}
-
 func newAgentApp(run func(config agentConfig) error) *cli.Command {
 	var configPath string
 	jsonSource := altsrc.NewStringPtrSourcer(&configPath)
@@ -91,7 +69,7 @@ func newAgentApp(run func(config agentConfig) error) *cli.Command {
 			Destination: &configPath,
 			Usage:       "Путь к JSON-файлу конфигурации",
 			Action: func(_ context.Context, _ *cli.Command, path string) error {
-				return validateJSONConfig(path)
+				return config.ValidateJSON(path)
 			},
 		},
 		&cli.StringFlag{
