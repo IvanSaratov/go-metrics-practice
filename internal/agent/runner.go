@@ -3,11 +3,12 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/sync/errgroup"
 )
 
 // Agent периодически собирает метрики и отправляет их через Client.
@@ -41,37 +42,35 @@ func NewAgent(
 	}
 }
 
-// Run запускает сбор и отправку метрик и работает до отмены ctx.
-// Перед возвратом ждёт текущие операции и отправляет оставшиеся метрики.
-// Обычные ошибки пишет в лог, ошибку финальной отправки возвращает вызывающему коду.
+// Run собирает и отправляет метрики до отмены ctx или ошибки создания запроса.
+// При отмене ctx ждёт текущие операции и отправляет оставшиеся метрики.
 func (a *Agent) Run(ctx context.Context) error {
-	// Сигнал останавливает расписание, но не должен прерывать начатые запросы.
+	workers, runCtx := errgroup.WithContext(ctx)
+	// Начатые запросы и финальная отправка должны завершиться даже после сигнала.
 	workCtx := context.WithoutCancel(ctx)
 	reports := make(chan struct{})
-	var workers sync.WaitGroup
-	// Лимит относится только к отправке, ещё три горутины собирают и планируют
-	workers.Add(a.rateLimit + 3)
 
-	go func() {
-		defer workers.Done()
-		a.collectRuntime(ctx)
-	}()
-	go func() {
-		defer workers.Done()
-		a.collectSystem(ctx)
-	}()
-	go func() {
-		defer workers.Done()
-		a.scheduleReports(ctx, reports)
-	}()
+	workers.Go(func() error {
+		a.collectRuntime(runCtx)
+		return nil
+	})
+	workers.Go(func() error {
+		a.collectSystem(runCtx)
+		return nil
+	})
+	workers.Go(func() error {
+		a.scheduleReports(runCtx, reports)
+		return nil
+	})
 	for range a.rateLimit {
-		go func() {
-			defer workers.Done()
-			a.reportWorker(workCtx, reports)
-		}()
+		workers.Go(func() error {
+			return a.reportWorker(workCtx, reports)
+		})
 	}
 
-	workers.Wait()
+	if err := workers.Wait(); err != nil {
+		return err
+	}
 	if err := a.report(workCtx); err != nil {
 		return fmt.Errorf("send final metrics: %w", err)
 	}
@@ -146,12 +145,17 @@ func (a *Agent) scheduleReports(ctx context.Context, reports chan<- struct{}) {
 }
 
 // отправляет актуальный снимок метрик по заданию планировщика
-func (a *Agent) reportWorker(ctx context.Context, reports <-chan struct{}) {
+func (a *Agent) reportWorker(ctx context.Context, reports <-chan struct{}) error {
 	for range reports {
 		if err := a.report(ctx); err != nil {
+			// Адрес задан при запуске, поэтому повтор с тем же адресом не поможет.
+			if errors.Is(err, errCreateRequest) {
+				return err
+			}
 			log.WithError(err).Warn("failed to report metrics")
 		}
 	}
+	return nil
 }
 
 // При ошибке возвращает счётчики в накопитель для следующей отправки.

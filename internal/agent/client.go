@@ -28,6 +28,8 @@ const (
 	identityEncoding = "identity"
 )
 
+var errCreateRequest = errors.New("create request")
+
 var gzipWriterPool = sync.Pool{
 	New: func() any {
 		return gzip.NewWriter(io.Discard)
@@ -123,7 +125,7 @@ func (c *Client) send(ctx context.Context, path string, payload any) error {
 			bytes.NewReader(body),
 		)
 		if err != nil {
-			return fmt.Errorf("create request: %w", err)
+			return fmt.Errorf("%w: %w", errCreateRequest, err)
 		}
 		req.Header.Set("Content-Type", jsonContentType)
 		// Выставляем нужные заголовки

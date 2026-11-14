@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -283,6 +284,24 @@ func TestAgentRunContinuesWhenReportFails(t *testing.T) {
 	cancel()
 
 	require.ErrorIs(t, waitAgentStopped(t, done), httpClient.err)
+}
+
+func TestAgentRunStopsOnInvalidServerAddress(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+		defer cancel()
+		metrics := NewMetrics()
+		metrics.counters["TestCounter"] = 10
+		client := NewClient("http://localhost:bad", &recordingHTTPClient{}, "", nil)
+		agent := NewAgent(metrics, client, time.Hour, time.Second, 2)
+
+		err := agent.Run(ctx)
+
+		require.NoError(t, ctx.Err(), "agent waited for external cancellation")
+		var addressErr *url.Error
+		require.ErrorAs(t, err, &addressErr)
+		require.Equal(t, int64(10), metrics.counters["TestCounter"])
+	})
 }
 
 func TestAgentRunPollsMetricsWhileReportIsBlocked(t *testing.T) {
