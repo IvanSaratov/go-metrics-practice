@@ -69,7 +69,12 @@ func runServer(
 	if database != nil {
 		handlerDatabase = database
 	}
-	router := handler.NewServer(storage, handlerDatabase, notifyAudit)
+	router := handler.NewServer(storage, handlerDatabase, handler.Config{
+		Logger:      appLogger,
+		SigningKey:  config.key,
+		PrivateKey:  privateKey,
+		NotifyAudit: notifyAudit,
+	})
 	listener, err := net.Listen("tcp", config.address)
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", config.address, err)
@@ -91,7 +96,7 @@ func runServer(
 
 	server := &http.Server{
 		Addr:    config.address,
-		Handler: withMiddleware(router, appLogger, config.key, privateKey),
+		Handler: router,
 	}
 
 	serveDone := make(chan struct{})

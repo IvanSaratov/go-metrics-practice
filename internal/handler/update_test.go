@@ -201,10 +201,11 @@ func TestUpdateHandlerAuditsSuccessfulUpdates(t *testing.T) {
 			requestContext, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			var events []audit.Event
-			server := NewServer(&readErrorStorage{}, nil, func(ctx context.Context, event audit.Event) {
+			notify := func(ctx context.Context, event audit.Event) {
 				require.Equal(t, requestContext.Done(), ctx.Done())
 				events = append(events, event)
-			})
+			}
+			server := NewServer(&readErrorStorage{}, nil, Config{NotifyAudit: notify})
 			request := httptest.NewRequest(http.MethodPost, tt.path, strings.NewReader(tt.body))
 			request = request.WithContext(requestContext)
 			request.RemoteAddr = tt.remoteAddr
@@ -278,7 +279,8 @@ func TestUpdateHandlerSkipsAuditWithoutSuccessfulMetrics(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			calls := 0
-			server := NewServer(&readErrorStorage{writeErr: tt.storeErr}, nil, func(context.Context, audit.Event) { calls++ })
+			notify := func(context.Context, audit.Event) { calls++ }
+			server := NewServer(&readErrorStorage{writeErr: tt.storeErr}, nil, Config{NotifyAudit: notify})
 			request := httptest.NewRequest(tt.method, tt.path, strings.NewReader(tt.body))
 			request.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()

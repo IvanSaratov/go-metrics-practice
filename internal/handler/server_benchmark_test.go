@@ -40,7 +40,7 @@ func BenchmarkServer(b *testing.B) {
 			if err := storage.UpdateBatch(context.Background(), metrics); err != nil {
 				b.Fatal(err)
 			}
-			server := NewServer(storage, nil, nil)
+			server := NewServer(storage, nil, Config{})
 			b.ReportAllocs()
 
 			// Создание запроса и буфера ответа httptest тоже входит в замер.
