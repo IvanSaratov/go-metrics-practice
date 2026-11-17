@@ -2,10 +2,8 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net"
-	"os"
 	"time"
 
 	"github.com/IvanSaratov/go-metrics-practice/internal/cliflags"
@@ -17,6 +15,7 @@ import (
 
 type serverConfig struct {
 	address         string
+	grpcAddress     string
 	shutdownTimeout time.Duration
 	storeInterval   time.Duration
 	fileStoragePath string
@@ -56,6 +55,11 @@ func newServerApp(run func(config serverConfig) error) *cli.Command {
 			Value: "localhost:8080",
 			Usage: "HTTP server address",
 		},
+		&cli.StringFlag{
+			Name:    "grpc-address",
+			Sources: cli.EnvVars("GRPC_ADDRESS"),
+			Usage:   "Адрес gRPC host:port",
+		},
 		&cli.GenericFlag{
 			Name: "shutdown-timeout",
 			Sources: cli.NewValueSourceChain(
@@ -63,7 +67,7 @@ func newServerApp(run func(config serverConfig) error) *cli.Command {
 				altsrcjson.JSON("shutdown_timeout", jsonSource),
 			),
 			Value: cliflags.NewDuration(5 * time.Second),
-			Usage: "Время ожидания активных HTTP-запросов при остановке",
+			Usage: "Время ожидания HTTP- и gRPC-запросов при остановке",
 		},
 		&cli.GenericFlag{
 			Name:    "store-interval",
@@ -120,7 +124,7 @@ func newServerApp(run func(config serverConfig) error) *cli.Command {
 				cli.EnvVar("CRYPTO_KEY"),
 				altsrcjson.JSON("crypto_key", jsonSource),
 			),
-			Usage: "Путь к файлу с приватным ключом шифрования",
+			Usage: "Путь к файлу с приватным ключом шифрования для HTTP",
 		},
 		&cli.StringFlag{
 			Name:    "trusted-subnet",
@@ -174,7 +178,20 @@ func newServerApp(run func(config serverConfig) error) *cli.Command {
 			}
 		}
 
+		grpcAddress := cmd.String("grpc-address")
+		if !cmd.IsSet("grpc-address") {
+			var err error
+			grpcAddress, err = config.ReadStringJSON(configPath, "grpc_address")
+			if err != nil {
+				return err
+			}
+		}
+		if err := config.ValidateGRPCAddress(grpcAddress); err != nil {
+			return err
+		}
+
 		return run(serverConfig{
+			grpcAddress:     grpcAddress,
 			address:         cmd.String("address"),
 			shutdownTimeout: shutdownTimeout,
 			storeInterval:   storeInterval,
@@ -193,24 +210,9 @@ func newServerApp(run func(config serverConfig) error) *cli.Command {
 }
 
 func readTrustedSubnetJSON(path string) (string, error) {
-	if path == "" {
-		return "", nil
-	}
-	data, err := os.ReadFile(path)
+	value, err := config.ReadStringJSON(path, "trusted_subnet")
 	if err != nil {
-		return "", fmt.Errorf("read config %q: %w", path, err)
+		return "", fmt.Errorf("invalid trusted subnet: %w", err)
 	}
-	var values map[string]json.RawMessage
-	if err := json.Unmarshal(data, &values); err != nil {
-		return "", fmt.Errorf("decode config %q: %w", path, err)
-	}
-	value, exists := values["trusted_subnet"]
-	if !exists {
-		return "", nil
-	}
-	var subnet *string
-	if err := json.Unmarshal(value, &subnet); err != nil || subnet == nil {
-		return "", fmt.Errorf("invalid trusted subnet in config %q: trusted_subnet must be a string", path)
-	}
-	return *subnet, nil
+	return value, nil
 }

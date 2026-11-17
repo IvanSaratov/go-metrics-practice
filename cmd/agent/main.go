@@ -27,6 +27,7 @@ var (
 
 type agentConfig struct {
 	serverAddress  string
+	grpcAddress    string
 	pollInterval   time.Duration
 	reportInterval time.Duration
 	timeout        time.Duration
@@ -81,6 +82,11 @@ func newAgentApp(run func(config agentConfig) error) *cli.Command {
 			Value: "localhost:8080",
 			Usage: "HTTP server address to connect",
 		},
+		&cli.StringFlag{
+			Name:    "grpc-address",
+			Sources: cli.EnvVars("GRPC_ADDRESS"),
+			Usage:   "Адрес gRPC host:port",
+		},
 		&cli.GenericFlag{
 			Name:    "p",
 			Aliases: []string{"poll_interval"},
@@ -118,7 +124,7 @@ func newAgentApp(run func(config agentConfig) error) *cli.Command {
 				cli.EnvVar("KEY"),
 				altsrcjson.JSON("key", jsonSource),
 			),
-			Usage: "Key for signing request bodies",
+			Usage: "Key for signing HTTP request bodies",
 		},
 		&cli.StringFlag{
 			Name: "crypto-key",
@@ -126,7 +132,7 @@ func newAgentApp(run func(config agentConfig) error) *cli.Command {
 				cli.EnvVar("CRYPTO_KEY"),
 				altsrcjson.JSON("crypto_key", jsonSource),
 			),
-			Usage: "Путь к файлу с публичным ключом шифрования",
+			Usage: "Путь к файлу с публичным ключом шифрования для HTTP",
 		},
 		&cli.IntFlag{
 			Name:    "l",
@@ -155,7 +161,20 @@ func newAgentApp(run func(config agentConfig) error) *cli.Command {
 			return fmt.Errorf("report interval must be positive")
 		}
 
+		grpcAddress := cmd.String("grpc-address")
+		if !cmd.IsSet("grpc-address") {
+			var err error
+			grpcAddress, err = config.ReadStringJSON(configPath, "grpc_address")
+			if err != nil {
+				return err
+			}
+		}
+		if err := config.ValidateGRPCAddress(grpcAddress); err != nil {
+			return err
+		}
+
 		return run(agentConfig{
+			grpcAddress:    grpcAddress,
 			serverAddress:  cmd.String("a"),
 			pollInterval:   pollInterval,
 			reportInterval: reportInterval,
@@ -170,22 +189,31 @@ func newAgentApp(run func(config agentConfig) error) *cli.Command {
 }
 
 func runAgent(config agentConfig) error {
-	// Читаем ключ один раз, до запуска воркеров. Пустой путь отключает шифрование.
-	publicKey, err := cryptoutil.LoadPublicKey(config.cryptoKeyPath)
-	if err != nil {
-		return fmt.Errorf("load public key: %w", err)
-	}
-
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT)
 	defer stop()
+	return runAgentWithContext(ctx, config)
+}
 
-	httpClient := agent.NewHTTPClient(config.timeout)
-	client := agent.NewClient(
-		cliflags.NormalizeBaseURL(config.serverAddress),
-		httpClient,
-		config.key,
-		publicKey,
-	)
+func runAgentWithContext(ctx context.Context, config agentConfig) error {
+	var client agent.BatchSender
+	if config.grpcAddress != "" {
+		grpcClient, err := agent.NewGRPCClient(config.grpcAddress, config.timeout)
+		if err != nil {
+			return err
+		}
+		// Run сначала завершит воркеры и отправит остаток метрик, затем закроем соединение.
+		defer grpcClient.Close()
+		client = grpcClient
+	} else {
+		// Ключ используется только в HTTP-транспорте и читается до запуска воркеров.
+		publicKey, err := cryptoutil.LoadPublicKey(config.cryptoKeyPath)
+		if err != nil {
+			return fmt.Errorf("load public key: %w", err)
+		}
+		httpClient := agent.NewHTTPClient(config.timeout)
+		defer httpClient.CloseIdleConnections()
+		client = agent.NewClient(cliflags.NormalizeBaseURL(config.serverAddress), httpClient, config.key, publicKey)
+	}
 	metrics := agent.NewMetrics()
 	metricsAgent := agent.NewAgent(
 		metrics,

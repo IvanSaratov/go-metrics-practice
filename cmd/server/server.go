@@ -11,9 +11,12 @@ import (
 
 	"github.com/IvanSaratov/go-metrics-practice/internal/config/db"
 	"github.com/IvanSaratov/go-metrics-practice/internal/cryptoutil"
+	"github.com/IvanSaratov/go-metrics-practice/internal/grpcserver"
 	"github.com/IvanSaratov/go-metrics-practice/internal/handler"
+	pb "github.com/IvanSaratov/go-metrics-practice/internal/proto"
 	"github.com/IvanSaratov/go-metrics-practice/internal/repository"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 )
 
 // Запускает сервер с нужным хранилищем и аудитом.
@@ -82,6 +85,20 @@ func runServer(
 	}
 	defer listener.Close()
 
+	var grpcServer *grpc.Server
+	var grpcListener net.Listener
+	if config.grpcAddress != "" {
+		// Открываем оба порта до запуска обработки запросов.
+		// Если gRPC-порт занят, HTTP-слушатель закроется через defer выше.
+		grpcListener, err = net.Listen("tcp", config.grpcAddress)
+		if err != nil {
+			return fmt.Errorf("listen gRPC on %s: %w", config.grpcAddress, err)
+		}
+		defer grpcListener.Close()
+		grpcServer = grpc.NewServer(grpc.UnaryInterceptor(grpcserver.TrustedSubnetInterceptor(config.trustedSubnet)))
+		pb.RegisterMetricsServer(grpcServer, grpcserver.NewService(storage, notifyAudit))
+	}
+
 	if fileStorage, ok := storage.(*repository.FileStorage); ok {
 		stopPeriodicSave := startPeriodicSave(config.storeInterval, fileStorage, appLogger)
 		defer func() {
@@ -109,8 +126,21 @@ func runServer(
 
 	appLogger.Info("server started", zap.String("address", listener.Addr().String()))
 
+	// nil-канал отключает ветку select, если gRPC не настроен.
+	var grpcServeDone chan struct{}
+	var grpcServeErr error
+	if grpcServer != nil {
+		grpcServeDone = make(chan struct{})
+		go func() {
+			grpcServeErr = grpcServer.Serve(grpcListener)
+			close(grpcServeDone)
+		}()
+		appLogger.Info("gRPC server started", zap.String("address", grpcListener.Addr().String()))
+	}
+
 	select {
 	case <-serveDone:
+	case <-grpcServeDone:
 	case <-ctx.Done():
 		appLogger.Info("shutdown requested")
 	}
@@ -118,6 +148,12 @@ func runServer(
 	// Завершаем активные запросы и при сигнале, и при ошибке слушателя.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), config.shutdownTimeout)
 	defer cancel()
+	// Останавливаем оба транспорта параллельно, в пределах одного таймаута.
+	var grpcShutdownDone chan error
+	if grpcServer != nil {
+		grpcShutdownDone = make(chan error, 1)
+		go func() { grpcShutdownDone <- shutdownGRPC(shutdownCtx, grpcServer) }()
+	}
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		resultErr = fmt.Errorf("shutdown server: %w", err)
 		if closeErr := server.Close(); closeErr != nil {
@@ -127,6 +163,15 @@ func runServer(
 	<-serveDone
 	if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
 		resultErr = errors.Join(resultErr, fmt.Errorf("serve HTTP: %w", serveErr))
+	}
+	if grpcServer != nil {
+		if err := <-grpcShutdownDone; err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("shutdown gRPC server: %w", err))
+		}
+		<-grpcServeDone
+		if grpcServeErr != nil && !errors.Is(grpcServeErr, grpc.ErrServerStopped) {
+			resultErr = errors.Join(resultErr, fmt.Errorf("serve gRPC: %w", grpcServeErr))
+		}
 	}
 	if resultErr == nil {
 		appLogger.Info("server stopped")

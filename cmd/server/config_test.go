@@ -692,7 +692,7 @@ func TestServerAppStoreFileEnvironment(t *testing.T) {
 
 func clearServerConfigEnv(t *testing.T) {
 	t.Helper()
-	for _, name := range []string{"CONFIG", "ADDRESS", "SHUTDOWN_TIMEOUT", "STORE_INTERVAL", "FILE_STORAGE_PATH", "STORE_FILE", "RESTORE", "DATABASE_DSN", "KEY", "CRYPTO_KEY", "TRUSTED_SUBNET", "AUDIT_FILE", "AUDIT_URL"} {
+	for _, name := range []string{"CONFIG", "GRPC_ADDRESS", "ADDRESS", "SHUTDOWN_TIMEOUT", "STORE_INTERVAL", "FILE_STORAGE_PATH", "STORE_FILE", "RESTORE", "DATABASE_DSN", "KEY", "CRYPTO_KEY", "TRUSTED_SUBNET", "AUDIT_FILE", "AUDIT_URL"} {
 		// Setenv восстановит окружение после теста, Unsetenv убирает источник.
 		t.Setenv(name, "")
 		require.NoError(t, os.Unsetenv(name))
@@ -704,4 +704,54 @@ func writeServerConfigFile(t *testing.T, content string) string {
 	path := filepath.Join(t.TempDir(), "config.json")
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
 	return path
+}
+
+func TestServerAppGRPCAddress(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		json      string
+		env       map[string]string
+		args      []string
+		want      string
+		wantError bool
+	}{
+		{name: "default HTTP"},
+		{name: "JSON", json: `{"grpc_address":"localhost:9090"}`, want: "localhost:9090"},
+		{name: "environment overrides JSON", json: `{"grpc_address":"localhost:9090"}`, env: map[string]string{"GRPC_ADDRESS": "localhost:9091"}, want: "localhost:9091"},
+		{name: "flag overrides environment", json: `{"grpc_address":"localhost:9090"}`, env: map[string]string{"GRPC_ADDRESS": "localhost:9091"}, args: []string{"--grpc-address", "localhost:9092"}, want: "localhost:9092"},
+		{name: "empty flag", env: map[string]string{"GRPC_ADDRESS": "localhost:9091"}, args: []string{"--grpc-address="}},
+		{name: "empty environment", json: `{"grpc_address":"localhost:9090"}`, env: map[string]string{"GRPC_ADDRESS": ""}},
+		{name: "IPv6", args: []string{"--grpc-address", "[::1]:9090"}, want: "[::1]:9090"},
+		{name: "override invalid JSON field", json: `{"grpc_address":[]}`, args: []string{"--grpc-address="}},
+		{name: "array", json: `{"grpc_address":[]}`, wantError: true},
+		{name: "null", json: `{"grpc_address":null}`, wantError: true},
+		{name: "number", json: `{"grpc_address":9090}`, wantError: true},
+		{name: "missing port", args: []string{"--grpc-address", "localhost"}, wantError: true},
+		{name: "invalid port from environment", env: map[string]string{"GRPC_ADDRESS": "localhost:abc"}, wantError: true},
+		{name: "port out of range", json: `{"grpc_address":"localhost:65536"}`, wantError: true},
+		{name: "HTTP URL", args: []string{"--grpc-address", "http://localhost:9090"}, wantError: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			clearServerConfigEnv(t)
+			for name, value := range tt.env {
+				t.Setenv(name, value)
+			}
+			args := []string{"server"}
+			if tt.json != "" {
+				args = append(args, "-c", writeServerConfigFile(t, tt.json))
+			}
+			var got serverConfig
+			called := false
+			app := newServerApp(func(config serverConfig) error { got = config; called = true; return nil })
+			err := app.Run(t.Context(), append(args, tt.args...))
+			if tt.wantError {
+				require.Error(t, err)
+				require.False(t, called)
+				return
+			}
+			require.NoError(t, err)
+			require.True(t, called)
+			require.Equal(t, tt.want, got.grpcAddress)
+		})
+	}
 }

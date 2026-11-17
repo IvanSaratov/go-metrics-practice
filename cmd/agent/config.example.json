@@ -1,5 +1,6 @@
 {
   "address": "localhost:8080",
+  "grpc_address": "",
   "poll_interval": "2s",
   "report_interval": "10s",
   "timeout": "30s",

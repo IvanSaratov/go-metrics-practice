@@ -29,3 +29,28 @@ func ValidateJSON(path string) error {
 	}
 	return nil
 }
+
+// ReadStringJSON читает необязательное строковое поле, сохраняя проверку его типа.
+// В altsrc пустой массив превращается в пустую строку и может незаметно отключить настройку.
+func ReadStringJSON(path, key string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read config %q: %w", path, err)
+	}
+	var values map[string]json.RawMessage
+	if err := json.Unmarshal(data, &values); err != nil {
+		return "", fmt.Errorf("decode config %q: %w", path, err)
+	}
+	value, exists := values[key]
+	if !exists {
+		return "", nil
+	}
+	var result *string
+	if err := json.Unmarshal(value, &result); err != nil || result == nil {
+		return "", fmt.Errorf("invalid config %q: %s must be a string", path, key)
+	}
+	return *result, nil
+}
