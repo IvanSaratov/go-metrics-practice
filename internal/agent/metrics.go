@@ -123,6 +123,33 @@ func (m *Metrics) snapshot() []model.Metrics {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	return m.snapshotLocked()
+}
+
+// Забирает счётчики для одного пакета, чтобы другой воркер не отправил их повторно.
+func (m *Metrics) takeSnapshot() []model.Metrics {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	metrics := m.snapshotLocked()
+	clear(m.counters)
+	return metrics
+}
+
+// Возвращает неотправленные прибавки, сохраняя новые счётчики и актуальные gauge.
+func (m *Metrics) restoreCounters(metrics []model.Metrics) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, metric := range metrics {
+		if metric.MType == model.Counter {
+			m.counters[metric.ID] += *metric.Delta
+		}
+	}
+}
+
+// Вызывается только при уже взятой блокировке m.mu.
+func (m *Metrics) snapshotLocked() []model.Metrics {
 	metrics := make([]model.Metrics, 0, len(m.gauges)+len(m.counters))
 
 	for name, value := range m.gauges {

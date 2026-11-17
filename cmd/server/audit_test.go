@@ -187,12 +187,12 @@ func TestServerHandlerKeepsSuccessWhenAuditFails(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, closer.Close()) })
 	storage := repository.NewMemStorage()
-	server := handler.NewServer(storage, nil, notify)
+	server := handler.NewServer(storage, nil, handler.Config{Logger: appLogger, NotifyAudit: notify})
 	request := httptest.NewRequest(http.MethodPost, "/update", strings.NewReader(`{"id":"Alloc","type":"gauge","value":12.5}`))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 
-	withMiddleware(server, appLogger, "").ServeHTTP(response, request)
+	server.ServeHTTP(response, request)
 
 	require.Equal(t, http.StatusOK, response.Code)
 	value, found, err := storage.GetGauge(context.Background(), "Alloc")
@@ -223,7 +223,7 @@ func TestServerHandlerDoesNotWaitForAuditHTTP(t *testing.T) {
 			synctest.Wait()
 			require.NoError(t, closer.Close())
 		}()
-		server := handler.NewServer(repository.NewMemStorage(), nil, notify)
+		server := handler.NewServer(repository.NewMemStorage(), nil, handler.Config{NotifyAudit: notify})
 		request := httptest.NewRequest(http.MethodPost, "/update", strings.NewReader(`{"id":"Alloc","type":"gauge","value":12.5}`))
 		request.Header.Set("Content-Type", "application/json")
 		ctx, cancel := context.WithCancel(request.Context())

@@ -12,7 +12,7 @@ import (
 )
 
 func ExampleServer_text() {
-	server := handler.NewServer(repository.NewMemStorage(), nil, nil)
+	server := handler.NewServer(repository.NewMemStorage(), nil, handler.Config{})
 
 	request := httptest.NewRequest(http.MethodPost, "/update/counter/PollCount/3", nil)
 	response := httptest.NewRecorder()
@@ -30,7 +30,7 @@ func ExampleServer_text() {
 }
 
 func ExampleServer_json() {
-	server := handler.NewServer(repository.NewMemStorage(), nil, nil)
+	server := handler.NewServer(repository.NewMemStorage(), nil, handler.Config{})
 
 	body := strings.NewReader(`{"id":"Alloc","type":"gauge","value":1024}`)
 	request := httptest.NewRequest(http.MethodPost, "/update", body)
@@ -54,7 +54,7 @@ func ExampleServer_json() {
 }
 
 func ExampleServer_batch() {
-	server := handler.NewServer(repository.NewMemStorage(), nil, nil)
+	server := handler.NewServer(repository.NewMemStorage(), nil, handler.Config{})
 
 	body := strings.NewReader(`[{"id":"Alloc","type":"gauge","value":2048},{"id":"PollCount","type":"counter","delta":2}]`)
 	request := httptest.NewRequest(http.MethodPost, "/updates", body)
@@ -72,7 +72,7 @@ func ExampleServer_batch() {
 func ExampleServer_list() {
 	storage := repository.NewMemStorage()
 	_ = storage.SetGauge(context.Background(), "Alloc", 1024)
-	server := handler.NewServer(storage, nil, nil)
+	server := handler.NewServer(storage, nil, handler.Config{})
 
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
 	response := httptest.NewRecorder()
@@ -86,7 +86,7 @@ func ExampleServer_list() {
 }
 
 func ExampleServer_ping() {
-	server := handler.NewServer(repository.NewMemStorage(), exampleDB{}, nil)
+	server := handler.NewServer(repository.NewMemStorage(), exampleDB{}, handler.Config{})
 
 	request := httptest.NewRequest(http.MethodGet, "/ping", nil)
 	response := httptest.NewRecorder()

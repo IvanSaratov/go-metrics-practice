@@ -8,9 +8,9 @@ import (
 	"net"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/IvanSaratov/go-metrics-practice/internal/config/db"
+	"github.com/IvanSaratov/go-metrics-practice/internal/cryptoutil"
 	"github.com/IvanSaratov/go-metrics-practice/internal/handler"
 	"github.com/IvanSaratov/go-metrics-practice/internal/repository"
 	"go.uber.org/zap"
@@ -22,6 +22,12 @@ func runServer(
 	config serverConfig,
 	appLogger *zap.Logger,
 ) (resultErr error) {
+	// Проверяем ключ до открытия БД и HTTP-порта.
+	privateKey, err := cryptoutil.LoadPrivateKey(config.cryptoKeyPath)
+	if err != nil {
+		return fmt.Errorf("load private key: %w", err)
+	}
+
 	var database *sql.DB
 	databaseDSN := strings.TrimSpace(config.databaseDSN)
 	if databaseDSN != "" {
@@ -63,7 +69,12 @@ func runServer(
 	if database != nil {
 		handlerDatabase = database
 	}
-	router := handler.NewServer(storage, handlerDatabase, notifyAudit)
+	router := handler.NewServer(storage, handlerDatabase, handler.Config{
+		Logger:      appLogger,
+		SigningKey:  config.key,
+		PrivateKey:  privateKey,
+		NotifyAudit: notifyAudit,
+	})
 	listener, err := net.Listen("tcp", config.address)
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", config.address, err)
@@ -83,52 +94,41 @@ func runServer(
 		}()
 	}
 
-	requests := &drainingHandler{next: withMiddleware(router, appLogger, config.key)}
 	server := &http.Server{
 		Addr:    config.address,
-		Handler: requests,
+		Handler: router,
 	}
-	defer func() {
-		// При таймауте Shutdown закрываем соединения и ждём обработчиков.
-		if err := server.Close(); err != nil {
-			resultErr = errors.Join(resultErr, fmt.Errorf("close HTTP server: %w", err))
-		}
-		requests.wait()
-	}()
 
-	// Чтобы Serve не ждал, пока мы закончим Shutdown.
-	serveErrors := make(chan error, 1)
+	serveDone := make(chan struct{})
+	var serveErr error
 	go func() {
-		serveErrors <- server.Serve(listener)
+		serveErr = server.Serve(listener)
+		close(serveDone)
 	}()
 
 	appLogger.Info("server started", zap.String("address", listener.Addr().String()))
 
 	select {
-	case err := <-serveErrors:
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			return fmt.Errorf("serve HTTP: %w", err)
-		}
-		appLogger.Info("server stopped")
-		return nil
+	case <-serveDone:
 	case <-ctx.Done():
 		appLogger.Info("shutdown requested")
 	}
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// Завершаем активные запросы и при сигнале, и при ошибке слушателя.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), config.shutdownTimeout)
 	defer cancel()
-
-	shutdownErr := server.Shutdown(shutdownCtx)
-	// Не теряем ошибку Serve, если остановка уже началась.
-	serveErr := <-serveErrors
-
-	if shutdownErr != nil {
-		return fmt.Errorf("shutdown server: %w", shutdownErr)
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		resultErr = fmt.Errorf("shutdown server: %w", err)
+		if closeErr := server.Close(); closeErr != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("close HTTP server: %w", closeErr))
+		}
 	}
+	<-serveDone
 	if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-		return fmt.Errorf("serve HTTP during shutdown: %w", serveErr)
+		resultErr = errors.Join(resultErr, fmt.Errorf("serve HTTP: %w", serveErr))
 	}
-
-	appLogger.Info("server stopped")
-	return nil
+	if resultErr == nil {
+		appLogger.Info("server stopped")
+	}
+	return resultErr
 }

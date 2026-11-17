@@ -38,14 +38,14 @@ func runMain() {
 }
 
 func run(args []string, appLogger *zap.Logger) int {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT)
 	defer stop()
 
 	app := newServerApp(func(config serverConfig) error {
 		return runServer(ctx, config, appLogger)
 	})
 
-	if err := app.Run(args); err != nil {
+	if err := app.Run(ctx, args); err != nil {
 		appLogger.Error("server failed", zap.Error(err))
 		return 1
 	}

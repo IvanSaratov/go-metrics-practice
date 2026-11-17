@@ -79,3 +79,65 @@ func TestMetricsSnapshotCopiesValues(t *testing.T) {
 	require.Equal(t, 67.1, metrics.gauges["TestGauge"])
 	require.Equal(t, int64(10), metrics.counters["TestCounter"])
 }
+
+func TestMetricsTakeSnapshotReservesCounters(t *testing.T) {
+	metrics := NewMetrics()
+	metrics.gauges["TestGauge"] = 67.1
+	metrics.counters["TestCounter"] = 10
+	gauge := 67.1
+	delta := int64(10)
+
+	first := metrics.takeSnapshot()
+	second := metrics.takeSnapshot()
+
+	require.ElementsMatch(t, []model.Metrics{
+		{ID: "TestGauge", MType: model.Gauge, Value: &gauge},
+		{ID: "TestCounter", MType: model.Counter, Delta: &delta},
+	}, first)
+	require.Equal(t, []model.Metrics{
+		{ID: "TestGauge", MType: model.Gauge, Value: &gauge},
+	}, second)
+	require.Zero(t, metrics.counters["TestCounter"])
+}
+
+func TestMetricsRestoreCountersKeepsNewValues(t *testing.T) {
+	metrics := NewMetrics()
+	metrics.gauges["TestGauge"] = 67.1
+	metrics.counters["TestCounter"] = 10
+	batch := metrics.takeSnapshot()
+	metrics.counters["TestCounter"] += 3
+	metrics.gauges["TestGauge"] = 99.0
+
+	metrics.restoreCounters(batch)
+
+	require.Equal(t, int64(13), metrics.counters["TestCounter"])
+	require.Equal(t, 99.0, metrics.gauges["TestGauge"])
+}
+
+func TestMetricsTakeSnapshotConcurrent(t *testing.T) {
+	metrics := NewMetrics()
+	metrics.counters["TestCounter"] = 10
+	const workers = 8
+	start := make(chan struct{})
+	batches := make(chan []model.Metrics, workers)
+	for range workers {
+		go func() {
+			<-start
+			batches <- metrics.takeSnapshot()
+		}()
+	}
+	close(start)
+
+	var total int64
+	for range workers {
+		for _, metric := range <-batches {
+			require.Equal(t, "TestCounter", metric.ID)
+			require.Equal(t, model.Counter, metric.MType)
+			require.NotNil(t, metric.Delta)
+			total += *metric.Delta
+		}
+	}
+
+	require.Equal(t, int64(10), total)
+	require.Zero(t, metrics.counters["TestCounter"])
+}

@@ -21,6 +21,9 @@ cmd/server/server
 # Dependency directories (remove the comment below to include it)
 vendor/
 
+# Локальные настройки агента и сервера
+config.json
+
 # Локальные снимки метрик
 /temp/
 

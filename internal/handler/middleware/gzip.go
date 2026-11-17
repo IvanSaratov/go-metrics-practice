@@ -28,8 +28,8 @@ func GzipMiddleware(next http.Handler) http.Handler {
 	)(next)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Проверка заголовка
-		encoding := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Encoding")))
+		// Content-Encoding может прийти в нескольких строках заголовка.
+		encoding := strings.ToLower(strings.TrimSpace(strings.Join(r.Header.Values("Content-Encoding"), ",")))
 
 		switch encoding {
 		case "", identityEncoding:
