@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
+	"os"
 	"time"
 
 	"github.com/IvanSaratov/go-metrics-practice/internal/cliflags"
@@ -123,11 +125,8 @@ func newServerApp(run func(config serverConfig) error) *cli.Command {
 		&cli.StringFlag{
 			Name:    "trusted-subnet",
 			Aliases: []string{"t"},
-			Sources: cli.NewValueSourceChain(
-				cli.EnvVar("TRUSTED_SUBNET"),
-				altsrcjson.JSON("trusted_subnet", jsonSource),
-			),
-			Usage: "Доверенная подсеть агентов в формате CIDR",
+			Sources: cli.EnvVars("TRUSTED_SUBNET"),
+			Usage:   "Доверенная подсеть агентов в формате CIDR",
 		},
 		&cli.StringFlag{
 			Name: "audit-file",
@@ -156,9 +155,18 @@ func newServerApp(run func(config serverConfig) error) *cli.Command {
 			return fmt.Errorf("store interval must not be negative")
 		}
 
+		value := cmd.String("trusted-subnet")
+		if !cmd.IsSet("trusted-subnet") {
+			// altsrc превращает [] в пустую строку. Читаем JSON сами, если его не перекрыли флагом или окружением.
+			var err error
+			value, err = readTrustedSubnetJSON(configPath)
+			if err != nil {
+				return err
+			}
+		}
 		// Разбираем CIDR один раз при запуске. Пустая строка оставляет доступ без ограничений.
 		var trustedSubnet *net.IPNet
-		if value := cmd.String("trusted-subnet"); value != "" {
+		if value != "" {
 			var err error
 			_, trustedSubnet, err = net.ParseCIDR(value)
 			if err != nil {
@@ -182,4 +190,27 @@ func newServerApp(run func(config serverConfig) error) *cli.Command {
 	}
 
 	return app
+}
+
+func readTrustedSubnetJSON(path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read config %q: %w", path, err)
+	}
+	var values map[string]json.RawMessage
+	if err := json.Unmarshal(data, &values); err != nil {
+		return "", fmt.Errorf("decode config %q: %w", path, err)
+	}
+	value, exists := values["trusted_subnet"]
+	if !exists {
+		return "", nil
+	}
+	var subnet *string
+	if err := json.Unmarshal(value, &subnet); err != nil || subnet == nil {
+		return "", fmt.Errorf("invalid trusted subnet in config %q: trusted_subnet must be a string", path)
+	}
+	return *subnet, nil
 }

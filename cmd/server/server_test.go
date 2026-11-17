@@ -13,7 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/IvanSaratov/go-metrics-practice/internal/agent"
 	"github.com/IvanSaratov/go-metrics-practice/internal/audit"
+	"github.com/IvanSaratov/go-metrics-practice/internal/model"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -204,6 +206,67 @@ func TestRunServerShutsDownWithActiveRequest(t *testing.T) {
 			var event audit.Event
 			require.NoError(t, json.Unmarshal(data, &event))
 			require.Equal(t, []string{"Alloc"}, event.Metrics)
+		})
+	}
+}
+
+func TestRunServerTrustedSubnet(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		subnet     string
+		wantStored bool
+	}{
+		{name: "agent in subnet", subnet: "127.0.0.0/8", wantStored: true},
+		{name: "agent outside subnet", subnet: "10.0.0.0/8"},
+		{name: "subnet disabled", wantStored: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			config := serverConfig{address: "127.0.0.1:0", shutdownTimeout: time.Second, key: "secret"}
+			if tt.subnet != "" {
+				var err error
+				_, config.trustedSubnet, err = net.ParseCIDR(tt.subnet)
+				require.NoError(t, err)
+			}
+			core, logs := observer.New(zap.InfoLevel)
+			ctx, stop := context.WithCancel(t.Context())
+			done := make(chan error, 1)
+			go func() { done <- runServer(ctx, config, zap.New(core)) }()
+			t.Cleanup(func() {
+				stop()
+				select {
+				case err := <-done:
+					require.NoError(t, err)
+				case <-time.After(2 * time.Second):
+					t.Error("server did not stop")
+				}
+			})
+			require.Eventually(t, func() bool {
+				return logs.FilterMessage("server started").Len() != 0
+			}, 2*time.Second, time.Millisecond)
+			address := logs.FilterMessage("server started").All()[0].ContextMap()["address"].(string)
+			httpClient := agent.NewHTTPClient(time.Second)
+			defer httpClient.CloseIdleConnections()
+			client := agent.NewClient("http://"+address, httpClient, config.key, nil)
+			value := 67.1
+
+			err := client.SendBatch(t.Context(), []model.Metrics{{ID: "Alloc", MType: model.Gauge, Value: &value}})
+
+			if tt.wantStored {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, "unexpected status code: 403")
+			}
+			response, err := httpClient.Get("http://" + address + "/value/gauge/Alloc")
+			require.NoError(t, err)
+			defer response.Body.Close()
+			body, err := io.ReadAll(response.Body)
+			require.NoError(t, err)
+			if tt.wantStored {
+				require.Equal(t, http.StatusOK, response.StatusCode)
+				require.Equal(t, "67.1", string(body))
+			} else {
+				require.Equal(t, http.StatusNotFound, response.StatusCode)
+			}
 		})
 	}
 }

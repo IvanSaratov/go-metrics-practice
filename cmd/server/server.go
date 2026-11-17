@@ -70,10 +70,11 @@ func runServer(
 		handlerDatabase = database
 	}
 	router := handler.NewServer(storage, handlerDatabase, handler.Config{
-		Logger:      appLogger,
-		SigningKey:  config.key,
-		PrivateKey:  privateKey,
-		NotifyAudit: notifyAudit,
+		Logger:        appLogger,
+		SigningKey:    config.key,
+		PrivateKey:    privateKey,
+		TrustedSubnet: config.trustedSubnet,
+		NotifyAudit:   notifyAudit,
 	})
 	listener, err := net.Listen("tcp", config.address)
 	if err != nil {

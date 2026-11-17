@@ -371,6 +371,24 @@ func TestServerAppTrustedSubnet(t *testing.T) {
 			env:  map[string]string{"TRUSTED_SUBNET": "invalid"},
 			json: `{"trusted_subnet":"invalid"}`, want: "10.0.0.0/8",
 		},
+		{
+			name: "flag overrides JSON array",
+			args: []string{"-t", "10.0.0.0/8"},
+			json: `{"trusted_subnet":[]}`, want: "10.0.0.0/8",
+		},
+		{
+			name: "environment overrides JSON array",
+			env:  map[string]string{"TRUSTED_SUBNET": "172.16.0.0/12"},
+			json: `{"trusted_subnet":[]}`, want: "172.16.0.0/12",
+		},
+		{
+			name: "empty flag overrides JSON array",
+			args: []string{"-t="}, json: `{"trusted_subnet":[]}`,
+		},
+		{
+			name: "empty environment overrides JSON array",
+			env:  map[string]string{"TRUSTED_SUBNET": ""}, json: `{"trusted_subnet":[]}`,
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			clearServerConfigEnv(t)
@@ -416,6 +434,11 @@ func TestServerAppRejectsInvalidTrustedSubnet(t *testing.T) {
 		{name: "invalid CIDR from JSON", json: `{"trusted_subnet":"invalid"}`},
 		{name: "invalid IPv6 mask", json: `{"trusted_subnet":"2001:db8::/129"}`},
 		{name: "number instead of string", json: `{"trusted_subnet":123}`},
+		{name: "empty array", json: `{"trusted_subnet":[]}`},
+		{name: "single CIDR array", json: `{"trusted_subnet":["192.168.1.0/24"]}`},
+		{name: "null", json: `{"trusted_subnet":null}`},
+		{name: "object", json: `{"trusted_subnet":{}}`},
+		{name: "boolean", json: `{"trusted_subnet":false}`},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			clearServerConfigEnv(t)
