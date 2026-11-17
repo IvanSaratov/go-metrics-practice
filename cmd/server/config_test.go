@@ -327,6 +327,119 @@ func TestServerAppRejectsUnknownFlag(t *testing.T) {
 	require.Contains(t, err.Error(), "flag provided but not defined")
 }
 
+func TestServerAppTrustedSubnet(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		args []string
+		env  map[string]string
+		json string
+		want string
+	}{
+		{name: "unset"},
+		{name: "short flag", args: []string{"-t", "10.0.0.0/8"}, want: "10.0.0.0/8"},
+		{name: "long flag", args: []string{"--trusted-subnet", "10.0.0.0/8"}, want: "10.0.0.0/8"},
+		{name: "environment", env: map[string]string{"TRUSTED_SUBNET": "172.16.0.0/12"}, want: "172.16.0.0/12"},
+		{name: "JSON", json: `{"trusted_subnet":"192.168.1.0/24"}`, want: "192.168.1.0/24"},
+		{name: "IPv6", json: `{"trusted_subnet":"2001:db8::/32"}`, want: "2001:db8::/32"},
+		{name: "host bits", args: []string{"-t", "192.168.1.42/24"}, want: "192.168.1.0/24"},
+		{name: "empty JSON value", json: `{"trusted_subnet":""}`},
+		{
+			name: "flag overrides environment and JSON",
+			args: []string{"-t", "10.0.0.0/8"},
+			env:  map[string]string{"TRUSTED_SUBNET": "172.16.0.0/12"},
+			json: `{"trusted_subnet":"192.168.1.0/24"}`, want: "10.0.0.0/8",
+		},
+		{
+			name: "environment overrides JSON",
+			env:  map[string]string{"TRUSTED_SUBNET": "172.16.0.0/12"},
+			json: `{"trusted_subnet":"192.168.1.0/24"}`, want: "172.16.0.0/12",
+		},
+		{
+			name: "empty flag overrides environment and JSON",
+			args: []string{"-t="},
+			env:  map[string]string{"TRUSTED_SUBNET": "172.16.0.0/12"},
+			json: `{"trusted_subnet":"192.168.1.0/24"}`,
+		},
+		{
+			name: "empty environment overrides JSON",
+			env:  map[string]string{"TRUSTED_SUBNET": ""},
+			json: `{"trusted_subnet":"192.168.1.0/24"}`,
+		},
+		{
+			name: "flag overrides invalid sources",
+			args: []string{"-t", "10.0.0.0/8"},
+			env:  map[string]string{"TRUSTED_SUBNET": "invalid"},
+			json: `{"trusted_subnet":"invalid"}`, want: "10.0.0.0/8",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			clearServerConfigEnv(t)
+			for name, value := range tt.env {
+				t.Setenv(name, value)
+			}
+			args := []string{"server"}
+			if tt.json != "" {
+				args = append(args, "-c", writeServerConfigFile(t, tt.json))
+			}
+			var got serverConfig
+			runCalled := false
+			app := newServerApp(func(config serverConfig) error {
+				got = config
+				runCalled = true
+				return nil
+			})
+
+			err := app.Run(t.Context(), append(args, tt.args...))
+
+			require.NoError(t, err)
+			require.True(t, runCalled)
+			if tt.want == "" {
+				require.Nil(t, got.trustedSubnet)
+			} else {
+				require.NotNil(t, got.trustedSubnet)
+				require.Equal(t, tt.want, got.trustedSubnet.String())
+			}
+		})
+	}
+}
+
+func TestServerAppRejectsInvalidTrustedSubnet(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		args []string
+		env  string
+		json string
+	}{
+		{name: "IP without prefix", args: []string{"-t", "192.168.1.1"}},
+		{name: "invalid IP", args: []string{"-t", "999.168.1.0/24"}},
+		{name: "invalid IPv4 mask from environment", env: "192.168.1.0/33"},
+		{name: "invalid CIDR from JSON", json: `{"trusted_subnet":"invalid"}`},
+		{name: "invalid IPv6 mask", json: `{"trusted_subnet":"2001:db8::/129"}`},
+		{name: "number instead of string", json: `{"trusted_subnet":123}`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			clearServerConfigEnv(t)
+			if tt.env != "" {
+				t.Setenv("TRUSTED_SUBNET", tt.env)
+			}
+			args := []string{"server"}
+			if tt.json != "" {
+				args = append(args, "-c", writeServerConfigFile(t, tt.json))
+			}
+			runCalled := false
+			app := newServerApp(func(config serverConfig) error {
+				runCalled = true
+				return nil
+			})
+
+			err := app.Run(t.Context(), append(args, tt.args...))
+
+			require.ErrorContains(t, err, "invalid trusted subnet")
+			require.False(t, runCalled)
+		})
+	}
+}
+
 const serverJSONConfig = `{
 	"address": "file:8080",
 	"shutdown_timeout": "3s",
@@ -556,7 +669,7 @@ func TestServerAppStoreFileEnvironment(t *testing.T) {
 
 func clearServerConfigEnv(t *testing.T) {
 	t.Helper()
-	for _, name := range []string{"CONFIG", "ADDRESS", "SHUTDOWN_TIMEOUT", "STORE_INTERVAL", "FILE_STORAGE_PATH", "STORE_FILE", "RESTORE", "DATABASE_DSN", "KEY", "CRYPTO_KEY", "AUDIT_FILE", "AUDIT_URL"} {
+	for _, name := range []string{"CONFIG", "ADDRESS", "SHUTDOWN_TIMEOUT", "STORE_INTERVAL", "FILE_STORAGE_PATH", "STORE_FILE", "RESTORE", "DATABASE_DSN", "KEY", "CRYPTO_KEY", "TRUSTED_SUBNET", "AUDIT_FILE", "AUDIT_URL"} {
 		// Setenv восстановит окружение после теста, Unsetenv убирает источник.
 		t.Setenv(name, "")
 		require.NoError(t, os.Unsetenv(name))

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/IvanSaratov/go-metrics-practice/internal/cliflags"
@@ -21,6 +22,7 @@ type serverConfig struct {
 	databaseDSN     string
 	key             string
 	cryptoKeyPath   string
+	trustedSubnet   *net.IPNet
 	auditFile       string
 	auditURL        string
 }
@@ -119,6 +121,15 @@ func newServerApp(run func(config serverConfig) error) *cli.Command {
 			Usage: "Путь к файлу с приватным ключом шифрования",
 		},
 		&cli.StringFlag{
+			Name:    "trusted-subnet",
+			Aliases: []string{"t"},
+			Sources: cli.NewValueSourceChain(
+				cli.EnvVar("TRUSTED_SUBNET"),
+				altsrcjson.JSON("trusted_subnet", jsonSource),
+			),
+			Usage: "Доверенная подсеть агентов в формате CIDR",
+		},
+		&cli.StringFlag{
 			Name: "audit-file",
 			Sources: cli.NewValueSourceChain(
 				cli.EnvVar("AUDIT_FILE"),
@@ -145,6 +156,16 @@ func newServerApp(run func(config serverConfig) error) *cli.Command {
 			return fmt.Errorf("store interval must not be negative")
 		}
 
+		// Разбираем CIDR один раз при запуске. Пустая строка оставляет доступ без ограничений.
+		var trustedSubnet *net.IPNet
+		if value := cmd.String("trusted-subnet"); value != "" {
+			var err error
+			_, trustedSubnet, err = net.ParseCIDR(value)
+			if err != nil {
+				return fmt.Errorf("invalid trusted subnet %q: %w", value, err)
+			}
+		}
+
 		return run(serverConfig{
 			address:         cmd.String("address"),
 			shutdownTimeout: shutdownTimeout,
@@ -154,6 +175,7 @@ func newServerApp(run func(config serverConfig) error) *cli.Command {
 			databaseDSN:     cmd.String("database-dsn"),
 			key:             cmd.String("key"),
 			cryptoKeyPath:   cmd.String("crypto-key"),
+			trustedSubnet:   trustedSubnet,
 			auditFile:       cmd.String("audit-file"),
 			auditURL:        cmd.String("audit-url"),
 		})
