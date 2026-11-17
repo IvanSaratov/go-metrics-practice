@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -180,9 +179,7 @@ func runAgent(config agentConfig) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT)
 	defer stop()
 
-	httpClient := &http.Client{
-		Timeout: config.timeout,
-	}
+	httpClient := agent.NewHTTPClient(config.timeout)
 	client := agent.NewClient(
 		cliflags.NormalizeBaseURL(config.serverAddress),
 		httpClient,

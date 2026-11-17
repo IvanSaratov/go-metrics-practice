@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/IvanSaratov/go-metrics-practice/internal/cryptoutil"
 	"github.com/IvanSaratov/go-metrics-practice/internal/model"
@@ -43,6 +44,15 @@ type HTTPClient interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
+// NewHTTPClient создаёт HTTP-клиент, который передаёт IP агента в X-Real-IP.
+func NewHTTPClient(timeout time.Duration) *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: &realIPTransport{Transport: transport},
+	}
+}
+
 // Client отправляет метрики в JSON, сжатом gzip, и шифрует их при заданном публичном ключе.
 type Client struct {
 	baseURL    string
@@ -53,6 +63,7 @@ type Client struct {
 }
 
 // NewClient создаёт клиент для отправки метрик через httpClient.
+// Для передачи IP агента используйте HTTP-клиент из NewHTTPClient.
 // baseURL — адрес сервера со схемой и без слеша в конце.
 // Если key пустой, запросы не подписываются.
 // Если publicKey равен nil, запросы не шифруются.

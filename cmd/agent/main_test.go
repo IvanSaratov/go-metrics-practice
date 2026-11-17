@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -73,6 +76,44 @@ func TestMainExitCodes(t *testing.T) {
 			require.Contains(t, string(output), tt.wantText)
 		})
 	}
+
+	t.Run("sends host IP and shuts down", func(t *testing.T) {
+		type receivedRequest struct {
+			realIP     string
+			remoteAddr string
+		}
+		received := make(chan receivedRequest, 1)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			select {
+			case received <- receivedRequest{r.Header.Get("X-Real-IP"), r.RemoteAddr}:
+			default:
+			}
+			w.Header().Set("Content-Type", "application/json")
+		}))
+		defer server.Close()
+
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		defer cancel()
+		command := exec.CommandContext(ctx, binary, "-a", server.URL, "-p", "10ms", "-r", "20ms")
+		command.Env = []string{}
+		require.NoError(t, command.Start())
+		defer func() {
+			_ = command.Process.Kill()
+			_ = command.Wait()
+		}()
+
+		var got receivedRequest
+		select {
+		case got = <-received:
+		case <-ctx.Done():
+			t.Fatal("agent did not send metrics:", ctx.Err())
+		}
+		require.NoError(t, command.Process.Signal(os.Interrupt))
+		require.NoError(t, command.Wait())
+		host, _, err := net.SplitHostPort(got.remoteAddr)
+		require.NoError(t, err)
+		require.Equal(t, host, got.realIP)
+	})
 }
 
 func TestAgentAppUsesDefaults(t *testing.T) {
