@@ -13,8 +13,13 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/IvanSaratov/go-metrics-practice/internal/grpcserver"
 	"github.com/IvanSaratov/go-metrics-practice/internal/model"
+	"github.com/IvanSaratov/go-metrics-practice/internal/repository"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestAgentReportPreservesPendingCounters(t *testing.T) {
@@ -452,6 +457,35 @@ func TestAgentRunPollsRuntimeWhileSystemCollectionIsBlocked(t *testing.T) {
 	cancel()
 	releaseCollection()
 	require.NoError(t, waitAgentStopped(t, done))
+}
+
+func TestAgentGRPCRestoresCountersAndFlushesOnShutdown(t *testing.T) {
+	storage := repository.NewMemStorage()
+	var requests atomic.Int32
+	failFirst := func(ctx context.Context, request any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		if requests.Add(1) == 1 {
+			return nil, status.Error(codes.Unavailable, "storage is temporarily unavailable")
+		}
+		return handler(ctx, request)
+	}
+	address := startTestGRPCServer(t, "tcp4", "127.0.0.1:0", grpcserver.NewService(storage, nil), failFirst)
+	client := newTestGRPCClient(t, address, time.Second)
+	metrics := NewMetrics()
+	metrics.counters["requests"] = 10
+	agent := NewAgent(metrics, client, time.Hour, time.Hour, 1)
+
+	require.Equal(t, codes.Unavailable, status.Code(agent.report(t.Context())))
+	require.Equal(t, int64(10), metrics.counters["requests"])
+	require.NoError(t, agent.report(t.Context()))
+	require.Zero(t, metrics.counters["requests"])
+	metrics.counters["requests"] = 3
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	require.NoError(t, agent.Run(ctx))
+	require.Zero(t, metrics.counters["requests"])
+	counters, err := storage.GetAllCounters(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, map[string]int64{"requests": 13}, counters)
 }
 
 func pollCount(metrics *Metrics) int64 {
