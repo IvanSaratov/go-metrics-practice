@@ -5,12 +5,9 @@ import (
 	"net/http"
 )
 
-// TrustedSubnetMiddleware проверяет X-Real-IP. При nil-подсети ограничений нет.
+// TrustedSubnetMiddleware проверяет X-Real-IP.
 func TrustedSubnetMiddleware(subnet *net.IPNet) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
-		if subnet == nil {
-			return next
-		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Ожидаем один IP: список адресов и повторяющиеся заголовки неоднозначны.
 			values := r.Header.Values("X-Real-IP")

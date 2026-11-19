@@ -16,8 +16,6 @@ func TestTrustedSubnetMiddleware(t *testing.T) {
 		headers []string
 		allowed bool
 	}{
-		{name: "disabled without header", allowed: true},
-		{name: "disabled with invalid header", headers: []string{"invalid"}, allowed: true},
 		{name: "IPv4 inside", subnet: "192.168.1.0/24", headers: []string{"192.168.1.5"}, allowed: true},
 		{name: "IPv4 outside", subnet: "192.168.1.0/24", headers: []string{"192.168.2.5"}},
 		{name: "missing header", subnet: "192.168.1.0/24"},
@@ -31,12 +29,8 @@ func TestTrustedSubnetMiddleware(t *testing.T) {
 		{name: "IPv4 mapped IPv6", subnet: "192.168.1.0/24", headers: []string{"::ffff:192.168.1.5"}, allowed: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			var subnet *net.IPNet
-			if tt.subnet != "" {
-				var err error
-				_, subnet, err = net.ParseCIDR(tt.subnet)
-				require.NoError(t, err)
-			}
+			_, subnet, err := net.ParseCIDR(tt.subnet)
+			require.NoError(t, err)
 			called := false
 			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				called = true
