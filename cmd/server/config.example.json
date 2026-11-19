@@ -1,5 +1,6 @@
 {
   "address": "localhost:8080",
+  "grpc_address": "",
   "shutdown_timeout": "5s",
   "restore": true,
   "store_interval": "5m",
@@ -7,6 +8,7 @@
   "database_dsn": "",
   "key": "",
   "crypto_key": "",
+  "trusted_subnet": "",
   "audit_file": "",
   "audit_url": ""
 }

@@ -29,6 +29,7 @@ import (
 )
 
 func TestClientSendGauge(t *testing.T) {
+	var realIP string
 	var requestMethod string
 	var requestPath string
 	var contentType string
@@ -39,6 +40,7 @@ func TestClientSendGauge(t *testing.T) {
 	var responseErr error
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		realIP = r.Header.Get("X-Real-IP")
 		requestMethod = r.Method
 		requestPath = r.URL.Path
 		contentType = r.Header.Get("Content-Type")
@@ -60,6 +62,7 @@ func TestClientSendGauge(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, decodeErr)
 	require.NoError(t, responseErr)
+	require.Equal(t, "127.0.0.1", realIP)
 	require.Equal(t, http.MethodPost, requestMethod)
 	require.Equal(t, "/update", requestPath)
 	require.Equal(t, "application/json", contentType)
@@ -73,6 +76,7 @@ func TestClientSendGauge(t *testing.T) {
 }
 
 func TestClientSendCounter(t *testing.T) {
+	var realIP string
 	var requestMethod string
 	var requestPath string
 	var contentType string
@@ -82,6 +86,7 @@ func TestClientSendCounter(t *testing.T) {
 	var decodeErr error
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		realIP = r.Header.Get("X-Real-IP")
 		requestMethod = r.Method
 		requestPath = r.URL.Path
 		contentType = r.Header.Get("Content-Type")
@@ -101,6 +106,7 @@ func TestClientSendCounter(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NoError(t, decodeErr)
+	require.Equal(t, "127.0.0.1", realIP)
 	require.Equal(t, http.MethodPost, requestMethod)
 	require.Equal(t, "/update", requestPath)
 	require.Equal(t, "application/json", contentType)
@@ -121,6 +127,7 @@ func TestClientSendBatch(t *testing.T) {
 		{ID: "TestCounter", MType: model.Counter, Delta: &counterDelta},
 	}
 
+	var realIP string
 	var requestMethod string
 	var requestPath string
 	var contentType string
@@ -130,6 +137,7 @@ func TestClientSendBatch(t *testing.T) {
 	var decodeErr error
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		realIP = r.Header.Get("X-Real-IP")
 		requestMethod = r.Method
 		requestPath = r.URL.Path
 		contentType = r.Header.Get("Content-Type")
@@ -149,6 +157,7 @@ func TestClientSendBatch(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NoError(t, decodeErr)
+	require.Equal(t, "127.0.0.1", realIP)
 	require.Equal(t, http.MethodPost, requestMethod)
 	require.Equal(t, "/updates/", requestPath)
 	require.Equal(t, "application/json", contentType)
@@ -198,6 +207,7 @@ func TestClientEncryptsRequests(t *testing.T) {
 				require.Equal(t, "application/json", headers.Get("Content-Type"))
 				require.Equal(t, "gzip, rsa-aesgcm", headers.Get("Content-Encoding"))
 				require.Equal(t, "gzip", headers.Get("Accept-Encoding"))
+				require.Equal(t, "127.0.0.1", headers.Get("X-Real-IP"))
 
 				compressed, err := cryptoutil.Decrypt(privateKey, requestBody)
 				require.NoError(t, err)
@@ -528,11 +538,9 @@ func writeGzipMetric(w io.Writer, metric model.Metrics) error {
 }
 
 func compressionDisabledClient() *http.Client {
-	return &http.Client{
-		Transport: &http.Transport{
-			DisableCompression: true,
-		},
-	}
+	client := NewHTTPClient(0)
+	client.Transport.(*realIPTransport).DisableCompression = true
+	return client
 }
 
 type flakyHTTPClient struct {

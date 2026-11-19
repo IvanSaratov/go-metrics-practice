@@ -3,7 +3,9 @@ package handler
 
 import (
 	"crypto/rsa"
+	"net"
 	"net/http"
+	"strings"
 
 	"github.com/IvanSaratov/go-metrics-practice/internal/handler/middleware"
 	"github.com/IvanSaratov/go-metrics-practice/internal/repository"
@@ -12,12 +14,13 @@ import (
 	"go.uber.org/zap"
 )
 
-// Config задаёт логирование, ключи и аудит HTTP-запросов.
+// Config задаёт доверенную подсеть, логирование, ключи и аудит HTTP-запросов.
 type Config struct {
-	Logger      *zap.Logger
-	SigningKey  string
-	PrivateKey  *rsa.PrivateKey
-	NotifyAudit AuditNotifier
+	Logger        *zap.Logger
+	SigningKey    string
+	PrivateKey    *rsa.PrivateKey
+	TrustedSubnet *net.IPNet
+	NotifyAudit   AuditNotifier
 }
 
 // Server направляет HTTP-запросы к обработчикам метрик и проверки базы.
@@ -47,6 +50,14 @@ func (s *Server) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 func (s *Server) registerRoutes(config Config) {
 	if config.Logger != nil {
 		s.router.Use(middleware.LoggingMiddleware(config.Logger))
+	}
+	if config.TrustedSubnet != nil {
+		// Проверяем доступ к записи до чтения тела, проверки подписи и распаковки.
+		s.router.Use(chimiddleware.Maybe(middleware.TrustedSubnetMiddleware(config.TrustedSubnet), func(r *http.Request) bool {
+			path := strings.TrimSuffix(r.URL.Path, "/")
+			return r.Method == http.MethodPost &&
+				(path == "/update" || path == "/updates" || strings.HasPrefix(path, "/update/"))
+		}))
 	}
 	// Проверяем подпись исходного тела до расшифровки и распаковки.
 	s.router.Use(middleware.SignatureMiddleware(config.SigningKey))

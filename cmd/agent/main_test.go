@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -73,6 +76,44 @@ func TestMainExitCodes(t *testing.T) {
 			require.Contains(t, string(output), tt.wantText)
 		})
 	}
+
+	t.Run("sends host IP and shuts down", func(t *testing.T) {
+		type receivedRequest struct {
+			realIP     string
+			remoteAddr string
+		}
+		received := make(chan receivedRequest, 1)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			select {
+			case received <- receivedRequest{r.Header.Get("X-Real-IP"), r.RemoteAddr}:
+			default:
+			}
+			w.Header().Set("Content-Type", "application/json")
+		}))
+		defer server.Close()
+
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		defer cancel()
+		command := exec.CommandContext(ctx, binary, "-a", server.URL, "-p", "10ms", "-r", "20ms")
+		command.Env = []string{}
+		require.NoError(t, command.Start())
+		defer func() {
+			_ = command.Process.Kill()
+			_ = command.Wait()
+		}()
+
+		var got receivedRequest
+		select {
+		case got = <-received:
+		case <-ctx.Done():
+			t.Fatal("agent did not send metrics:", ctx.Err())
+		}
+		require.NoError(t, command.Process.Signal(os.Interrupt))
+		require.NoError(t, command.Wait())
+		host, _, err := net.SplitHostPort(got.remoteAddr)
+		require.NoError(t, err)
+		require.Equal(t, host, got.realIP)
+	})
 }
 
 func TestAgentAppUsesDefaults(t *testing.T) {
@@ -519,7 +560,7 @@ func TestAgentAppConfigHelp(t *testing.T) {
 
 func clearAgentConfigEnv(t *testing.T) {
 	t.Helper()
-	for _, name := range []string{"CONFIG", "ADDRESS", "POLL_INTERVAL", "REPORT_INTERVAL", "TIMEOUT", "KEY", "CRYPTO_KEY", "RATE_LIMIT"} {
+	for _, name := range []string{"CONFIG", "GRPC_ADDRESS", "ADDRESS", "POLL_INTERVAL", "REPORT_INTERVAL", "TIMEOUT", "KEY", "CRYPTO_KEY", "RATE_LIMIT"} {
 		// Setenv восстановит окружение после теста, Unsetenv убирает источник.
 		t.Setenv(name, "")
 		require.NoError(t, os.Unsetenv(name))
@@ -531,4 +572,54 @@ func writeAgentConfigFile(t *testing.T, content string) string {
 	path := filepath.Join(t.TempDir(), "config.json")
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
 	return path
+}
+
+func TestAgentAppGRPCAddress(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		json      string
+		env       map[string]string
+		args      []string
+		want      string
+		wantError bool
+	}{
+		{name: "default HTTP"},
+		{name: "JSON", json: `{"grpc_address":"localhost:9090"}`, want: "localhost:9090"},
+		{name: "environment overrides JSON", json: `{"grpc_address":"localhost:9090"}`, env: map[string]string{"GRPC_ADDRESS": "localhost:9091"}, want: "localhost:9091"},
+		{name: "flag overrides environment", json: `{"grpc_address":"localhost:9090"}`, env: map[string]string{"GRPC_ADDRESS": "localhost:9091"}, args: []string{"--grpc-address", "localhost:9092"}, want: "localhost:9092"},
+		{name: "empty flag", env: map[string]string{"GRPC_ADDRESS": "localhost:9091"}, args: []string{"--grpc-address="}},
+		{name: "empty environment", json: `{"grpc_address":"localhost:9090"}`, env: map[string]string{"GRPC_ADDRESS": ""}},
+		{name: "IPv6", args: []string{"--grpc-address", "[::1]:9090"}, want: "[::1]:9090"},
+		{name: "override invalid JSON field", json: `{"grpc_address":[]}`, args: []string{"--grpc-address="}},
+		{name: "array", json: `{"grpc_address":[]}`, wantError: true},
+		{name: "null", json: `{"grpc_address":null}`, wantError: true},
+		{name: "number", json: `{"grpc_address":9090}`, wantError: true},
+		{name: "missing port", args: []string{"--grpc-address", "localhost"}, wantError: true},
+		{name: "invalid port from environment", env: map[string]string{"GRPC_ADDRESS": "localhost:abc"}, wantError: true},
+		{name: "port out of range", json: `{"grpc_address":"localhost:65536"}`, wantError: true},
+		{name: "HTTP URL", args: []string{"--grpc-address", "http://localhost:9090"}, wantError: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			clearAgentConfigEnv(t)
+			for name, value := range tt.env {
+				t.Setenv(name, value)
+			}
+			args := []string{"agent"}
+			if tt.json != "" {
+				args = append(args, "-c", writeAgentConfigFile(t, tt.json))
+			}
+			var got agentConfig
+			called := false
+			app := newAgentApp(func(config agentConfig) error { got = config; called = true; return nil })
+			err := app.Run(t.Context(), append(args, tt.args...))
+			if tt.wantError {
+				require.Error(t, err)
+				require.False(t, called)
+				return
+			}
+			require.NoError(t, err)
+			require.True(t, called)
+			require.Equal(t, tt.want, got.grpcAddress)
+		})
+	}
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/IvanSaratov/go-metrics-practice/internal/cliflags"
@@ -14,6 +15,7 @@ import (
 
 type serverConfig struct {
 	address         string
+	grpcAddress     string
 	shutdownTimeout time.Duration
 	storeInterval   time.Duration
 	fileStoragePath string
@@ -21,6 +23,7 @@ type serverConfig struct {
 	databaseDSN     string
 	key             string
 	cryptoKeyPath   string
+	trustedSubnet   *net.IPNet
 	auditFile       string
 	auditURL        string
 }
@@ -52,6 +55,11 @@ func newServerApp(run func(config serverConfig) error) *cli.Command {
 			Value: "localhost:8080",
 			Usage: "HTTP server address",
 		},
+		&cli.StringFlag{
+			Name:    "grpc-address",
+			Sources: cli.EnvVars("GRPC_ADDRESS"),
+			Usage:   "Адрес gRPC host:port",
+		},
 		&cli.GenericFlag{
 			Name: "shutdown-timeout",
 			Sources: cli.NewValueSourceChain(
@@ -59,7 +67,7 @@ func newServerApp(run func(config serverConfig) error) *cli.Command {
 				altsrcjson.JSON("shutdown_timeout", jsonSource),
 			),
 			Value: cliflags.NewDuration(5 * time.Second),
-			Usage: "Время ожидания активных HTTP-запросов при остановке",
+			Usage: "Время ожидания HTTP- и gRPC-запросов при остановке",
 		},
 		&cli.GenericFlag{
 			Name:    "store-interval",
@@ -116,7 +124,13 @@ func newServerApp(run func(config serverConfig) error) *cli.Command {
 				cli.EnvVar("CRYPTO_KEY"),
 				altsrcjson.JSON("crypto_key", jsonSource),
 			),
-			Usage: "Путь к файлу с приватным ключом шифрования",
+			Usage: "Путь к файлу с приватным ключом шифрования для HTTP",
+		},
+		&cli.StringFlag{
+			Name:    "trusted-subnet",
+			Aliases: []string{"t"},
+			Sources: cli.EnvVars("TRUSTED_SUBNET"),
+			Usage:   "Доверенная подсеть агентов в формате CIDR",
 		},
 		&cli.StringFlag{
 			Name: "audit-file",
@@ -145,7 +159,39 @@ func newServerApp(run func(config serverConfig) error) *cli.Command {
 			return fmt.Errorf("store interval must not be negative")
 		}
 
+		value := cmd.String("trusted-subnet")
+		if !cmd.IsSet("trusted-subnet") {
+			// altsrc превращает [] в пустую строку. Читаем JSON сами, если его не перекрыли флагом или окружением.
+			var err error
+			value, err = readTrustedSubnetJSON(configPath)
+			if err != nil {
+				return err
+			}
+		}
+		// Разбираем CIDR один раз при запуске. Пустая строка оставляет доступ без ограничений.
+		var trustedSubnet *net.IPNet
+		if value != "" {
+			var err error
+			_, trustedSubnet, err = net.ParseCIDR(value)
+			if err != nil {
+				return fmt.Errorf("invalid trusted subnet %q: %w", value, err)
+			}
+		}
+
+		grpcAddress := cmd.String("grpc-address")
+		if !cmd.IsSet("grpc-address") {
+			var err error
+			grpcAddress, err = config.ReadStringJSON(configPath, "grpc_address")
+			if err != nil {
+				return err
+			}
+		}
+		if err := config.ValidateGRPCAddress(grpcAddress); err != nil {
+			return err
+		}
+
 		return run(serverConfig{
+			grpcAddress:     grpcAddress,
 			address:         cmd.String("address"),
 			shutdownTimeout: shutdownTimeout,
 			storeInterval:   storeInterval,
@@ -154,10 +200,19 @@ func newServerApp(run func(config serverConfig) error) *cli.Command {
 			databaseDSN:     cmd.String("database-dsn"),
 			key:             cmd.String("key"),
 			cryptoKeyPath:   cmd.String("crypto-key"),
+			trustedSubnet:   trustedSubnet,
 			auditFile:       cmd.String("audit-file"),
 			auditURL:        cmd.String("audit-url"),
 		})
 	}
 
 	return app
+}
+
+func readTrustedSubnetJSON(path string) (string, error) {
+	value, err := config.ReadStringJSON(path, "trusted_subnet")
+	if err != nil {
+		return "", fmt.Errorf("invalid trusted subnet: %w", err)
+	}
+	return value, nil
 }

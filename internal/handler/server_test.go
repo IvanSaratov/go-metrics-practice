@@ -11,11 +11,13 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/IvanSaratov/go-metrics-practice/internal/audit"
 	"github.com/IvanSaratov/go-metrics-practice/internal/cryptoutil"
 	"github.com/IvanSaratov/go-metrics-practice/internal/repository"
 	"github.com/stretchr/testify/require"
@@ -41,6 +43,8 @@ func newTestServer(storage repository.Storage) *Server {
 func TestServerHandlerSupportsGzip(t *testing.T) {
 	const key = "secret"
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	_, subnet, err := net.ParseCIDR("192.168.1.0/24")
 	require.NoError(t, err)
 
 	for _, encrypted := range []bool{false, true} {
@@ -68,9 +72,10 @@ func TestServerHandlerSupportsGzip(t *testing.T) {
 			request.Header.Set("Content-Encoding", encoding)
 			request.Header.Set("Accept-Encoding", "gzip")
 			request.Header.Set("HashSHA256", hmacSHA256(t, body, key))
+			request.Header.Set("X-Real-IP", "192.168.1.5")
 			response := httptest.NewRecorder()
 
-			NewServer(storage, nil, Config{Logger: log, SigningKey: key, PrivateKey: privateKey}).ServeHTTP(response, request)
+			NewServer(storage, nil, Config{Logger: log, SigningKey: key, PrivateKey: privateKey, TrustedSubnet: subnet}).ServeHTTP(response, request)
 
 			require.Equal(t, http.StatusOK, response.Code)
 			require.Equal(t, "gzip", response.Header().Get("Content-Encoding"))
@@ -199,6 +204,132 @@ func TestServerHandlerAllowsUnsignedRequestWithKey(t *testing.T) {
 	require.True(t, found)
 	require.Equal(t, 67.1, value)
 	require.NotEmpty(t, response.Header().Get("HashSHA256"))
+}
+
+func TestServerTrustedSubnetProtectsAllUpdateRoutes(t *testing.T) {
+	_, subnet, err := net.ParseCIDR("192.168.1.0/24")
+	require.NoError(t, err)
+	const metric = `{"id":"PollCount","type":"counter","delta":5}`
+	for _, route := range []struct {
+		path string
+		body string
+	}{
+		{path: "/update", body: metric},
+		{path: "/update/", body: metric},
+		{path: "/updates", body: "[" + metric + "]"},
+		{path: "/updates/", body: "[" + metric + "]"},
+		{path: "/update/counter/PollCount/5"},
+		{path: "/update/counter/PollCount/5/"},
+	} {
+		for _, tt := range []struct {
+			name     string
+			ip       string
+			disabled bool
+			allowed  bool
+		}{
+			{name: "trusted", ip: "192.168.1.5", allowed: true},
+			{name: "untrusted", ip: "10.0.0.1"},
+			{name: "missing header"},
+			{name: "disabled without header", disabled: true, allowed: true},
+			{name: "disabled with invalid IP", ip: "invalid", disabled: true, allowed: true},
+		} {
+			t.Run(route.path+"/"+tt.name, func(t *testing.T) {
+				storage := repository.NewMemStorage()
+				_, err := storage.AddCounter(t.Context(), "PollCount", 10)
+				require.NoError(t, err)
+				auditCalled := false
+				config := Config{
+					TrustedSubnet: subnet,
+					NotifyAudit:   func(context.Context, audit.Event) { auditCalled = true },
+				}
+				if tt.disabled {
+					config.TrustedSubnet = nil
+				}
+				request := httptest.NewRequest(http.MethodPost, route.path, strings.NewReader(route.body))
+				request.Header.Set("Content-Type", "application/json")
+				if tt.ip != "" {
+					request.Header.Set("X-Real-IP", tt.ip)
+				}
+				response := httptest.NewRecorder()
+
+				NewServer(storage, nil, config).ServeHTTP(response, request)
+
+				value, found, err := storage.GetCounter(t.Context(), "PollCount")
+				require.NoError(t, err)
+				require.True(t, found)
+				require.Equal(t, tt.allowed, auditCalled)
+				if tt.allowed {
+					require.Equal(t, http.StatusOK, response.Code)
+					require.Equal(t, int64(15), value)
+				} else {
+					require.Equal(t, http.StatusForbidden, response.Code)
+					require.Equal(t, int64(10), value)
+				}
+			})
+		}
+	}
+}
+
+func TestServerTrustedSubnetDoesNotRestrictReads(t *testing.T) {
+	_, subnet, err := net.ParseCIDR("192.168.1.0/24")
+	require.NoError(t, err)
+	storage := repository.NewMemStorage()
+	require.NoError(t, storage.SetGauge(t.Context(), "Alloc", 67.1))
+	server := NewServer(storage, pingFunc(func(context.Context) error { return nil }), Config{TrustedSubnet: subnet})
+
+	for _, tt := range []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{method: http.MethodGet, path: "/"},
+		{method: http.MethodGet, path: "/ping"},
+		{method: http.MethodGet, path: "/value/gauge/Alloc"},
+		{method: http.MethodPost, path: "/value", body: `{"id":"Alloc","type":"gauge"}`},
+	} {
+		t.Run(tt.path, func(t *testing.T) {
+			request := httptest.NewRequest(tt.method, tt.path, strings.NewReader(tt.body))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("X-Real-IP", "10.0.0.1")
+			response := httptest.NewRecorder()
+
+			server.ServeHTTP(response, request)
+
+			require.Equal(t, http.StatusOK, response.Code)
+		})
+	}
+}
+
+func TestServerRejectsUntrustedBeforeBodyProcessing(t *testing.T) {
+	_, subnet, err := net.ParseCIDR("192.168.1.0/24")
+	require.NoError(t, err)
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	server := NewServer(repository.NewMemStorage(), nil, Config{
+		TrustedSubnet: subnet,
+		SigningKey:    "secret",
+		PrivateKey:    privateKey,
+	})
+	for _, tt := range []struct {
+		name   string
+		header string
+		value  string
+	}{
+		{name: "signature", header: "HashSHA256", value: "invalid"},
+		{name: "gzip", header: "Content-Encoding", value: "gzip"},
+		{name: "encryption", header: "Content-Encoding", value: "gzip, rsa-aesgcm"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/updates/", strings.NewReader("invalid body"))
+			request.Header.Set("X-Real-IP", "10.0.0.1")
+			request.Header.Set(tt.header, tt.value)
+			response := httptest.NewRecorder()
+
+			server.ServeHTTP(response, request)
+
+			require.Equal(t, http.StatusForbidden, response.Code)
+		})
+	}
 }
 
 // hmacSHA256 вычисляет ожидаемую подпись независимо от кода приложения.

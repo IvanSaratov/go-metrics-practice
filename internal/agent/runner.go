@@ -7,14 +7,20 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/IvanSaratov/go-metrics-practice/internal/model"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/sync/errgroup"
 )
 
-// Agent периодически собирает метрики и отправляет их через Client.
+// BatchSender отправляет снимок метрик по выбранному протоколу.
+type BatchSender interface {
+	SendBatch(context.Context, []model.Metrics) error
+}
+
+// Agent периодически собирает метрики и отправляет их батчами.
 type Agent struct {
 	metrics         *Metrics
-	client          *Client
+	client          BatchSender
 	pollInterval    time.Duration
 	reportInterval  time.Duration
 	rateLimit       int
@@ -27,7 +33,7 @@ type Agent struct {
 // Интервалы и rateLimit должны быть положительными.
 func NewAgent(
 	metrics *Metrics,
-	client *Client,
+	client BatchSender,
 	pollInterval time.Duration,
 	reportInterval time.Duration,
 	rateLimit int,
