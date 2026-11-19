@@ -50,22 +50,24 @@ func (c *GRPCClient) SendBatch(ctx context.Context, metrics []model.Metrics) err
 	if err := model.ValidateUpdates(metrics); err != nil {
 		return status.Errorf(codes.InvalidArgument, "invalid metrics batch: %v", err)
 	}
-	request := &pb.UpdateMetricsRequest{Metrics: make([]*pb.Metric, len(metrics))}
+	messages := make([]*pb.Metric, len(metrics))
 	for index, metric := range metrics {
-		item := &pb.Metric{Id: metric.ID}
+		item := &pb.Metric{}
+		item.SetId(metric.ID)
 		switch metric.MType {
 		case model.Gauge:
 			if math.IsNaN(*metric.Value) || math.IsInf(*metric.Value, 0) {
 				return status.Error(codes.InvalidArgument, "gauge value must be finite")
 			}
-			item.Type = pb.Metric_GAUGE
-			item.Value = *metric.Value
+			item.SetType(pb.Metric_GAUGE)
+			item.SetValue(*metric.Value)
 		case model.Counter:
-			item.Type = pb.Metric_COUNTER
-			item.Delta = *metric.Delta
+			item.SetType(pb.Metric_COUNTER)
+			item.SetDelta(*metric.Delta)
 		}
-		request.Metrics[index] = item
+		messages[index] = item
 	}
+	request := pb.UpdateMetricsRequest_builder{Metrics: messages}.Build()
 	if c.timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, c.timeout)

@@ -33,12 +33,12 @@ func TestUpdateMetricsStoresBatchesAndNotifiesAudit(t *testing.T) {
 	ctx = metadata.AppendToOutgoingContext(ctx, "x-real-ip", "192.0.2.10")
 	started := time.Now().Unix()
 
-	response, err := client.UpdateMetrics(ctx, &pb.UpdateMetricsRequest{Metrics: []*pb.Metric{
-		{Id: "temperature", Type: pb.Metric_GAUGE, Value: 23.5},
-		{Id: "requests", Type: pb.Metric_COUNTER, Delta: 10},
-		{Id: "requests", Type: pb.Metric_COUNTER, Delta: 5},
-		{Id: "idle", Type: pb.Metric_COUNTER, Delta: 0},
-	}})
+	response, err := client.UpdateMetrics(ctx, pb.UpdateMetricsRequest_builder{Metrics: []*pb.Metric{
+		pb.Metric_builder{Id: "temperature", Type: pb.Metric_GAUGE, Value: 23.5}.Build(),
+		pb.Metric_builder{Id: "requests", Type: pb.Metric_COUNTER, Delta: 10}.Build(),
+		pb.Metric_builder{Id: "requests", Type: pb.Metric_COUNTER, Delta: 5}.Build(),
+		pb.Metric_builder{Id: "idle", Type: pb.Metric_COUNTER, Delta: 0}.Build(),
+	}}.Build())
 	require.NoError(t, err)
 	require.NotNil(t, response)
 	gauges, err := storage.GetAllGauges(ctx)
@@ -48,10 +48,10 @@ func TestUpdateMetricsStoresBatchesAndNotifiesAudit(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, map[string]int64{"requests": 15, "idle": 0}, counters)
 
-	_, err = client.UpdateMetrics(ctx, &pb.UpdateMetricsRequest{Metrics: []*pb.Metric{
-		{Id: "temperature", Type: pb.Metric_GAUGE, Value: 0},
-		{Id: "requests", Type: pb.Metric_COUNTER, Delta: -2},
-	}})
+	_, err = client.UpdateMetrics(ctx, pb.UpdateMetricsRequest_builder{Metrics: []*pb.Metric{
+		pb.Metric_builder{Id: "temperature", Type: pb.Metric_GAUGE, Value: 0}.Build(),
+		pb.Metric_builder{Id: "requests", Type: pb.Metric_COUNTER, Delta: -2}.Build(),
+	}}.Build())
 	require.NoError(t, err)
 	gauges, err = storage.GetAllGauges(ctx)
 	require.NoError(t, err)
@@ -79,11 +79,11 @@ func TestUpdateMetricsRejectsInvalidBatchWithoutPartialUpdate(t *testing.T) {
 		metric *pb.Metric
 	}{
 		{name: "nil metric"},
-		{name: "empty id", metric: &pb.Metric{Type: pb.Metric_GAUGE, Value: 12}},
-		{name: "unknown type", metric: &pb.Metric{Id: "bad", Type: pb.Metric_MType(99)}},
-		{name: "NaN", metric: &pb.Metric{Id: "bad", Value: math.NaN()}},
-		{name: "positive infinity", metric: &pb.Metric{Id: "bad", Value: math.Inf(1)}},
-		{name: "negative infinity", metric: &pb.Metric{Id: "bad", Value: math.Inf(-1)}},
+		{name: "empty id", metric: pb.Metric_builder{Type: pb.Metric_GAUGE, Value: 12}.Build()},
+		{name: "unknown type", metric: pb.Metric_builder{Id: "bad", Type: pb.Metric_MType(99)}.Build()},
+		{name: "NaN", metric: pb.Metric_builder{Id: "bad", Value: math.NaN()}.Build()},
+		{name: "positive infinity", metric: pb.Metric_builder{Id: "bad", Value: math.Inf(1)}.Build()},
+		{name: "negative infinity", metric: pb.Metric_builder{Id: "bad", Value: math.Inf(-1)}.Build()},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := t.Context()
@@ -93,11 +93,11 @@ func TestUpdateMetricsRejectsInvalidBatchWithoutPartialUpdate(t *testing.T) {
 			events := 0
 			service := NewService(storage, func(context.Context, audit.Event) { events++ })
 
-			response, err := service.UpdateMetrics(ctx, &pb.UpdateMetricsRequest{Metrics: []*pb.Metric{
-				{Id: "requests", Type: pb.Metric_COUNTER, Delta: 5},
-				{Id: "temperature", Type: pb.Metric_GAUGE, Value: 23.5},
+			response, err := service.UpdateMetrics(ctx, pb.UpdateMetricsRequest_builder{Metrics: []*pb.Metric{
+				pb.Metric_builder{Id: "requests", Type: pb.Metric_COUNTER, Delta: 5}.Build(),
+				pb.Metric_builder{Id: "temperature", Type: pb.Metric_GAUGE, Value: 23.5}.Build(),
 				tt.metric,
-			}})
+			}}.Build())
 
 			require.Equal(t, codes.InvalidArgument, status.Code(err))
 			require.Nil(t, response)
@@ -151,9 +151,9 @@ func TestUpdateMetricsStorageErrors(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
 
-			response, err := client.UpdateMetrics(ctx, &pb.UpdateMetricsRequest{Metrics: []*pb.Metric{
-				{Id: "requests", Type: pb.Metric_COUNTER, Delta: 1},
-			}})
+			response, err := client.UpdateMetrics(ctx, pb.UpdateMetricsRequest_builder{Metrics: []*pb.Metric{
+				pb.Metric_builder{Id: "requests", Type: pb.Metric_COUNTER, Delta: 1}.Build(),
+			}}.Build())
 
 			require.Equal(t, tt.code, status.Code(err))
 			require.Nil(t, response)
@@ -169,9 +169,9 @@ func TestUpdateMetricsCanceledContextDoesNotWrite(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	response, err := service.UpdateMetrics(ctx, &pb.UpdateMetricsRequest{Metrics: []*pb.Metric{
-		{Id: "requests", Type: pb.Metric_COUNTER, Delta: 1},
-	}})
+	response, err := service.UpdateMetrics(ctx, pb.UpdateMetricsRequest_builder{Metrics: []*pb.Metric{
+		pb.Metric_builder{Id: "requests", Type: pb.Metric_COUNTER, Delta: 1}.Build(),
+	}}.Build())
 
 	require.Equal(t, codes.Canceled, status.Code(err))
 	require.Nil(t, response)

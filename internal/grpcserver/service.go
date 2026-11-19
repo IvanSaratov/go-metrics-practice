@@ -36,28 +36,29 @@ func (s *Service) UpdateMetrics(ctx context.Context, request *pb.UpdateMetricsRe
 	if request == nil {
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
-	if len(request.Metrics) == 0 {
+	requestMetrics := request.GetMetrics()
+	if len(requestMetrics) == 0 {
 		return &pb.UpdateMetricsResponse{}, nil
 	}
 
-	metrics := make([]model.Metrics, len(request.Metrics))
-	for index, metric := range request.Metrics {
+	metrics := make([]model.Metrics, len(requestMetrics))
+	for index, metric := range requestMetrics {
 		if metric == nil {
 			return nil, status.Error(codes.InvalidArgument, "metric is required")
 		}
-		metrics[index].ID = metric.Id
+		metrics[index].ID = metric.GetId()
 		// Нужное поле выбираем по типу метрики.
-		switch metric.Type {
+		switch metric.GetType() {
 		case pb.Metric_GAUGE:
 			// Protobuf допускает NaN и Inf, но JSON нет.
-			if math.IsNaN(metric.Value) || math.IsInf(metric.Value, 0) {
+			value := metric.GetValue()
+			if math.IsNaN(value) || math.IsInf(value, 0) {
 				return nil, status.Error(codes.InvalidArgument, "gauge value must be finite")
 			}
-			value := metric.Value
 			metrics[index].MType = model.Gauge
 			metrics[index].Value = &value
 		case pb.Metric_COUNTER:
-			delta := metric.Delta
+			delta := metric.GetDelta()
 			metrics[index].MType = model.Counter
 			metrics[index].Delta = &delta
 		default:

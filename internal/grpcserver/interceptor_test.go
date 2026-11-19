@@ -55,9 +55,9 @@ func TestTrustedSubnetInterceptor(t *testing.T) {
 				ctx = metadata.NewOutgoingContext(ctx, metadata.MD{"x-real-ip": tt.values})
 			}
 
-			response, err := client.UpdateMetrics(ctx, &pb.UpdateMetricsRequest{Metrics: []*pb.Metric{
-				{Id: "requests", Type: pb.Metric_COUNTER, Delta: 5},
-			}})
+			response, err := client.UpdateMetrics(ctx, pb.UpdateMetricsRequest_builder{Metrics: []*pb.Metric{
+				pb.Metric_builder{Id: "requests", Type: pb.Metric_COUNTER, Delta: 5}.Build(),
+			}}.Build())
 
 			wantCounter := int64(10)
 			if tt.allowed {
@@ -84,7 +84,9 @@ func TestTrustedSubnetInterceptorRunsBeforeValidation(t *testing.T) {
 	client := newTestClient(t, repository.NewMemStorage(), nil, subnet)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	request := &pb.UpdateMetricsRequest{Metrics: []*pb.Metric{{Id: "bad", Type: pb.Metric_MType(99)}}}
+	request := pb.UpdateMetricsRequest_builder{Metrics: []*pb.Metric{
+		pb.Metric_builder{Id: "bad", Type: pb.Metric_MType(99)}.Build(),
+	}}.Build()
 
 	_, err = client.UpdateMetrics(ctx, request)
 	require.Equal(t, codes.PermissionDenied, status.Code(err))
